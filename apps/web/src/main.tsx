@@ -36,6 +36,7 @@ import {
   inDesktopApp,
 } from "./lib/desktop";
 import { tolerateForeignDomEdits } from "./lib/dom-guard";
+import { isDormant } from "./lib/dormant";
 import { announceConfirmation, emailConfirmedToast } from "./lib/email-confirmation";
 import { catchEarlyErrors, reportError, setErrorScope, startErrorReports } from "./lib/error-reports";
 import { pageScrollReset } from "./lib/page-scroll";
@@ -189,7 +190,10 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("online", () => void checkAppVersion());
 document.addEventListener("copy", copyPillAddresses);
-setInterval(() => void checkAppVersion(), VERSION_CHECK_MS);
+// Wyrd-OS: not from a quiet tab (lib/dormant.ts), which checks again when it wakes.
+setInterval(() => {
+  if (!isDormant()) void checkAppVersion();
+}, VERSION_CHECK_MS);
 
 // Back from a provider's sign-in that didn't connect (a connector, the GitHub App, a mailbox): why, once.
 showReturnNotices(i18n.t, toasts.show);

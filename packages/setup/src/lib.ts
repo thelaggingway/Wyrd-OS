@@ -985,13 +985,12 @@ export function computerOf(content: string | null): OnOff | null {
 }
 
 /**
- * Where this machine reaches agentes.chat: the address the compose file publishes it on (`BIND_ADDRESS`,
- * `HOST_PORT`), loopback when that's every address. Root runs the installer that answers there.
+ * Where this machine reaches agentes.chat: Wyrd-OS publishes it for the agents' computer on a loopback port of its
+ * own (`HOST_COMPUTER_PORT`), apart from the one people use, so the runner's traffic never keeps an idle machine
+ * awake. Root runs the installer that answers there.
  */
 export function appOnThisMachine(content: string | null): string {
-  const bind = envValue(content, "BIND_ADDRESS") || "127.0.0.1";
-  const host = bind === "0.0.0.0" || bind === "[::]" ? "127.0.0.1" : bind;
-  return `http://${host}:${envValue(content, "HOST_PORT") || "3000"}`;
+  return `http://127.0.0.1:${envValue(content, "HOST_COMPUTER_PORT") || "3901"}`;
 }
 
 /**

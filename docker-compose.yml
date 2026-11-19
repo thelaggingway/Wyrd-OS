@@ -69,6 +69,9 @@ services:
     ports:
       # Loopback by default: Docker publishes ports through iptables, past any host firewall.
       - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+      # Wyrd-OS: the agents' computer on this machine reaches the app here, never on the port people use, so a host
+      # that counts traffic on that port as activity (InstaBox) can still pause an idle machine. Loopback only.
+      - "127.0.0.1:${HOST_COMPUTER_PORT:-3901}:3000"
     depends_on:
       postgres:
         condition: service_healthy

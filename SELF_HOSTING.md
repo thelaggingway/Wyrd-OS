@@ -795,6 +795,7 @@ ones a self-hosted instance usually touches:
 | `POSTGRES_PASSWORD` | required | Database password. Read by the compose file only. |
 | `AGENTES_IMAGE` | `ghcr.io/agentes-chat/agentes:latest` | The image to run. A version tag or a digest holds a version. |
 | `BIND_ADDRESS`, `HOST_PORT` | `127.0.0.1`, `3000` | Where the compose file publishes the app. |
+| `HOST_COMPUTER_PORT` | `3901` | Wyrd-OS: the loopback port this server's own agents' computer reaches the app on, apart from `HOST_PORT`, so its traffic doesn't keep an idle machine awake. |
 | `AGENTES_MEMORY` | `8g` | The most memory the app's container may take, swap included. Over it, the kernel stops the app alone and Docker restarts it, instead of the machine swapping until something else is killed. On a machine with less than 10 GiB of memory, the setup writes three quarters of it here instead: a limit above the machine's memory never fires. The speech server's is `SPEECH_MEMORY` (Voice messages). |
 | `COMPOSE_PROFILES` | | How people reach it: `tailscale` (the setup's default), `https` (Caddy for `DOMAIN`), or neither (this machine only). Comma-separated, with other optional services: `backup` (Backups and restore), `speech` (Voice messages), `embeddings` (Search across languages). |
 | `DOMAIN` | | The public domain Caddy gets a certificate for. |
@@ -1653,15 +1654,15 @@ with that command. A Codex an earlier setup installed as its lone binary can't r
 agents fail on a missing `codex-code-mode-host`): `--requirements codex` installs it again, whole.
 
 By hand on Linux (a server set up before, say): set a token in `.env` and give the same one to the
-agents' computer, as root, in the folder with `.env` (3000 is the app's port, `HOST_PORT` if you
-changed it):
+agents' computer, as root, in the folder with `.env` (3901 is the computer's own loopback port,
+`HOST_COMPUTER_PORT` if you changed it; Wyrd-OS keeps it apart from `HOST_PORT`):
 
 ```sh
 (umask 077 && openssl rand -base64 48 | tr -d '\n' > /root/host-computer-token)
 echo "HOST_COMPUTER_TOKEN=$(cat /root/host-computer-token)" >> .env
 docker compose up -d
-curl -fsSL http://127.0.0.1:3000/api/machines/install.sh | sh -s -- --system --desktop \
-  --server http://127.0.0.1:3000 --host-token-file /root/host-computer-token
+curl -fsSL http://127.0.0.1:3901/api/machines/install.sh | sh -s -- --system --desktop \
+  --server http://127.0.0.1:3901 --host-token-file /root/host-computer-token
 ```
 
 Within a minute it shows as "This server's computer" in each of those organizations, and agents

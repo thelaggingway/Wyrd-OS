@@ -80,6 +80,7 @@ import {
   refreshRepliedThread,
   repliedThread,
   retargetProvisional,
+  runningAgents,
   runsInChannel,
   type SocketFactory,
   type StreamsState,
@@ -111,6 +112,7 @@ import { useTranslation } from "react-i18next";
 import { useApi } from "@/api/context";
 import { checkAppVersion } from "@/lib/app-version";
 import { desktopNotice, inDesktopApp, thisMac } from "@/lib/desktop";
+import { watchDormancy } from "@/lib/dormant";
 import { feedIsland, island } from "@/lib/island";
 import { notificationAudience } from "@/lib/sounds";
 import { useToast } from "@/lib/toast";
@@ -578,7 +580,14 @@ export function RealtimeProvider({
     };
     document.addEventListener("visibilitychange", wake);
     window.addEventListener("online", wake);
+    // Wyrd-OS: an idle tab with no agent working lets go of the socket, and takes it again on the first input.
+    const offDormancy = watchDormancy({
+      busy: () => runningAgents(streams.get().streams).size > 0,
+      sleep: () => conn.stop(),
+      wake: () => conn.start(),
+    });
     return () => {
+      offDormancy();
       // Another workspace (or none): its notices go with it.
       island.clear();
       document.removeEventListener("visibilitychange", wake);

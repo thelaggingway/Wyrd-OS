@@ -804,13 +804,11 @@ describe("the agents' computer", () => {
     expect(computerOf("HOST_COMPUTER_TOKEN=\n")).toBe("off");
   });
 
-  test("this machine reaches the app where the compose file publishes it", () => {
-    expect(appOnThisMachine(null)).toBe("http://127.0.0.1:3000");
-    expect(appOnThisMachine("HOST_PORT=3001\n")).toBe("http://127.0.0.1:3001");
-    expect(appOnThisMachine("BIND_ADDRESS=0.0.0.0\n")).toBe("http://127.0.0.1:3000");
-    expect(appOnThisMachine("BIND_ADDRESS=[::]\n")).toBe("http://127.0.0.1:3000");
-    // Published on one address only: loopback isn't it, and whatever answers there isn't agentes.chat.
-    expect(appOnThisMachine("BIND_ADDRESS=10.0.0.5\nHOST_PORT=8080\n")).toBe("http://10.0.0.5:8080");
+  test("this machine's computer reaches the app on its own loopback port, whatever people use", () => {
+    expect(appOnThisMachine(null)).toBe("http://127.0.0.1:3901");
+    expect(appOnThisMachine("HOST_PORT=3001\n")).toBe("http://127.0.0.1:3901");
+    expect(appOnThisMachine("BIND_ADDRESS=10.0.0.5\nHOST_PORT=8080\n")).toBe("http://127.0.0.1:3901");
+    expect(appOnThisMachine("HOST_COMPUTER_PORT=3902\n")).toBe("http://127.0.0.1:3902");
   });
 
   test("set up with the server's own installer: system mode on Linux, as the person on a Mac", () => {
