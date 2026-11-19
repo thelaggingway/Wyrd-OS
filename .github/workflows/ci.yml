@@ -591,7 +591,9 @@ jobs:
   build:
     name: Image (${{ matrix.slug }})
     needs: [changes, check, test-backend, secrets, compose]
+    # Wyrd-OS (MODIFICATIONS.md): upstream's images only; this fork's image is built by wyrd-image.yml.
     if: >-
+      github.repository == 'agentes-chat/agentes-chat' &&
       github.event_name == 'push' && needs.changes.outputs.image == 'true' &&
       (github.ref_type == 'tag' || !github.event.repository.private) &&
       !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
