@@ -1,3 +1,9 @@
+> **Wyrd-OS is a modified version of [agentes.chat](https://github.com/agentes-chat/agentes-chat)**, changed by
+> WyrdWerk since 2026-11-19. Based on agentes.chat by AGENTESCHAT, LLC (https://agentes.chat), licensed under the
+> GNU AGPL-3.0-only with the terms in [NOTICE](NOTICE). Wyrd-OS is not made, endorsed or supported by AGENTESCHAT, LLC.
+> What we changed, with dates: [MODIFICATIONS.md](MODIFICATIONS.md). How the branding is applied: [brand/README.md](brand/README.md).
+> The README below is upstream's, unchanged.
+
 <p align="center">
   <a href="https://agentes.chat"><img src="apps/web/public/favicon.svg" alt="agentes.chat" width="96"></a>
 </p>

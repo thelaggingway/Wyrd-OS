@@ -78,3 +78,15 @@ Third-party software keeps its own license. The license texts are next to what t
 
 Every mark and logo listed here is a trademark of its owner, used only to name its product or
 service; none of these licenses grants trademark rights.
+
+--------------------------------------------------------------------------------
+
+Modified version (AGPL-3.0 section 5(a)): Wyrd-OS, https://github.com/thelaggingway/Wyrd-OS
+
+This repository is a modified version of agentes.chat, changed by WyrdWerk since 2026-11-19. The changes
+and their dates are listed in MODIFICATIONS.md. brand/apply.ts changes further files when the image is built;
+each file it changes starts with a "Modified by WyrdWerk" line. The attribution above stays in every copy:
+
+    Based on agentes.chat by AGENTESCHAT, LLC (https://agentes.chat)
+
+"agentes" and "agentes.chat" are trademarks of AGENTESCHAT, LLC, used here only to say what this is based on.

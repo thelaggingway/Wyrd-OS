@@ -5,6 +5,8 @@ WORKDIR /app
 # A named volume mounted on an empty image directory takes its owner: FILES_DIR in docker-compose.yml.
 RUN install -d -o bun -g bun /data/files
 COPY . .
+# Wyrd-OS: apply the branding (brand/README.md) before building.
+RUN bun brand/apply.ts
 RUN bun install --frozen-lockfile \
  && bun run --filter '@agenteschat/web' build \
  && bun build apps/server/runner/main.ts --target=node --banner '#!/usr/bin/env node' --outfile apps/web/dist/runner/agentes-runner.mjs

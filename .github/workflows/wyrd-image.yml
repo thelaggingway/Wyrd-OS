@@ -1,0 +1,42 @@
+# Wyrd-OS: builds the branded server image (Dockerfile runs brand/apply.ts) and publishes it to
+# ghcr.io/<owner>/wyrd-os. A tag like v0.1.8-wyrd.1 also publishes that version; main publishes :main and :sha-….
+name: wyrd-image
+on:
+  push:
+    branches: [main]
+    tags: ["v*-wyrd.*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: wyrd-image-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/wyrd-os
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
