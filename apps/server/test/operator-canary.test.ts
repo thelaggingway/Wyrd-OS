@@ -484,17 +484,20 @@ beforeAll(async () => {
     label: "canary tool label",
     access: "read",
   });
-  await db.insert(schema.mailAccounts).values({
-    ...sealed,
-    orgId,
-    provider: "gmail",
-    via: "composio",
-    address: "canary-mailbox@example.com",
-    label: "Support",
-    status: "active",
-    lastError: failed,
-    username: "canary-user",
-  });
+  const [mailbox] = await db
+    .insert(schema.mailAccounts)
+    .values({
+      ...sealed,
+      orgId,
+      provider: "gmail",
+      via: "composio",
+      address: "canary-mailbox@example.com",
+      label: "Support",
+      status: "active",
+      lastError: failed,
+      username: "canary-user",
+    })
+    .returning({ id: schema.mailAccounts.id });
   await db.insert(schema.dbConnections).values({
     ...sealed,
     orgId,
@@ -725,6 +728,13 @@ beforeAll(async () => {
     dedupeKey: "canary-delivery",
     agentRunId: run.id,
   });
+  // Counted by `/activity`, never shown: who it watches for and what.
+  await db.insert(schema.mailWatches).values({
+    orgId,
+    routineId: routine?.id ?? "",
+    accountId: mailbox?.id ?? "",
+    filter: { from: ["canary-sender@example.com"], subject: "canary subject" },
+  });
   await db.insert(schema.agentConsultations).values({
     orgId,
     askerRunId: run.id,
@@ -929,6 +939,7 @@ beforeAll(async () => {
   const paths = [
     "/openapi.json",
     "/health",
+    "/activity",
     "/orgs?limit=200",
     "/orgs?q=acme",
     "/events",
