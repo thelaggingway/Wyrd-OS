@@ -9,6 +9,7 @@ import type { Logger } from "../logger";
 import type { AppDeps } from "../routes/app/context";
 import { createSurfaceApp } from "../surface/app";
 import { registerOperatorAccess } from "./access";
+import { registerOperatorActivity } from "./activity";
 import { registerOperatorAnalytics } from "./analytics";
 import { registerOperatorClaudeAuth } from "./claude-auth";
 import { registerOperatorEvents } from "./events";
@@ -103,6 +104,7 @@ export function createOperatorApp(deps: OperatorDeps, token: string, readToken?:
   registerOperatorOutsideAccess(api, deps);
   registerOperatorEvents(api, deps);
   registerOperatorMachines(api, deps);
+  registerOperatorActivity(api, deps);
   registerOperatorAccess(api, deps);
   registerOperatorAnalytics(api, deps);
   registerOperatorClaudeAuth(api, deps);

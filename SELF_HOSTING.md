@@ -998,6 +998,11 @@ waits) and `GET /orgs/{orgId}/routines` its routines with their latest firings: 
 was asked or answered, or a routine's name or instructions. A connection's `label` is what its workspace
 calls it, which is a mailbox's address or a database's host when nobody named it; an audit entry's
 `targetId` is a name where the target has no id (a tool, a repository, a wiki folder).
+`GET /activity` tells a watchdog beside the server whether its machine may sleep: sleep only while
+`busy` is false (its `reasons` say what is running or due), `lastUsedAt` is old enough and `nextDueAt` is
+far enough away, and have something outside wake the machine before `nextDueAt`, or the routine or job
+due then waits for the next wake. `mailWatches` counts routines started by incoming email: mail that
+arrives while the machine sleeps is read only once it wakes.
 `GET /orgs/{orgId}/notifications?userId=` lists what one person was notified of and the pushes that
 carried it, never a notification's words; `GET /orgs/{orgId}/access?userId=&targetKind=&targetId=` says
 whether a person reaches an agent, a channel, a task, a file or a computer, and the rule that decides;
