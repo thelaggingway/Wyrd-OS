@@ -403,6 +403,17 @@ describe("agents with a restricted page", () => {
     );
     expect(saved.isError).toBeFalsy();
     expect((await body()).trim()).toBe("## Regra\n\nMargem mínima de 45%.");
+    // A body that opens with the page's own title as a heading keeps the rest only; another heading stays.
+    await tool("update_wiki_page").execute(
+      { page: "margens", mode: "replace", base_version: 2, content: "# margens\n\n## Regra\n\nMargem de 50%." },
+      ctx,
+    );
+    expect(await body()).toBe("## Regra\n\nMargem de 50%.");
+    await tool("update_wiki_page").execute(
+      { page: "margens", mode: "replace", base_version: 3, content: "# Regra antiga\n\nMargem de 50%." },
+      ctx,
+    );
+    expect(await body()).toBe("# Regra antiga\n\nMargem de 50%.");
   });
 
   test("a routine reads with its creator's access, and a run with nobody behind it with none", () => {

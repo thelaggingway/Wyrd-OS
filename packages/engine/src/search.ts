@@ -327,7 +327,7 @@ export async function agentSearchChannels(
 }
 
 /** Wyrd-OS: whether the agent is set to read every public channel (`agents.setup.reads`). */
-async function readsPublicChannels(db: Database, orgId: string, agentId: string) {
+export async function readsPublicChannels(db: Database, orgId: string, agentId: string) {
   const [agent] = await db
     .select({ setup: schema.agents.setup })
     .from(schema.agents)

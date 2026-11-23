@@ -39,12 +39,16 @@ const day = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
 
 /**
  * Wyrd-OS (MODIFICATIONS.md): what `read_wiki_page` adds around a page (its "# Title (slug …, version …)" line, its
- * "Tags:" line and its "Linked from:" line), taken off text an agent saves, which otherwise copied them into the page.
+ * "Tags:" line and its "Linked from:" line), taken off text an agent saves, which otherwise copied them into the page;
+ * and a first line that is the page's own title as a heading, which the page already shows above its body.
  */
-export const withoutReadFrame = (text: string) =>
-  text
+export const withoutReadFrame = (text: string, title?: string) => {
+  const kept = text
     .replace(/^\s*# [^\n]*\(slug [^\n,]+, version \d+[^\n]*\)\s*\n+(?:Tags: [^\n]*\n+)?/, "")
     .replace(/\n+Linked from: (?:\[\[[^\]]+\]\](?:, )?)+\s*$/, "\n");
+  const first = kept.match(/^\s*# ([^\n]+)\n*/);
+  return title && first?.[1]?.trim().toLowerCase() === title.trim().toLowerCase() ? kept.slice(first[0].length) : kept;
+};
 
 /** Shown when an agent tries to write with nobody who could have asked. */
 export const WIKI_WRITE_REFUSAL =
@@ -211,7 +215,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
               createWikiPage({ ...wiki(ctx), db }, actor, ctx.orgId, {
                 audience,
                 title: str(input.title),
-                body: withoutReadFrame(str(input.body)),
+                body: withoutReadFrame(str(input.body), str(input.title)),
                 folder: str(input.folder) || undefined,
                 tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
                 note: str(input.note) || undefined,
@@ -279,11 +283,12 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
             ctx,
             async (db) => {
               const deps = { ...wiki(ctx), db };
-              before = (await getWikiPage(db, actor, ctx.orgId, page)).version;
+              const current = await getWikiPage(db, actor, ctx.orgId, page);
+              before = current.version;
               return mode === "replace"
                 ? updateWikiPage(deps, actor, ctx.orgId, page, {
                     baseVersion: input.base_version as number,
-                    body: withoutReadFrame(str(input.content)),
+                    body: withoutReadFrame(str(input.content), current.title),
                     note: str(input.note) || undefined,
                   })
                 : appendToWikiPage(deps, actor, ctx.orgId, page, {

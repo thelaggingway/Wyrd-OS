@@ -663,6 +663,18 @@ describe("a routine's background run", () => {
     expect(text).not.toContain("relatório interno");
   });
 
+  test("Wyrd-OS: an agent made to read every public channel is never shown what was said where it reports", async () => {
+    f = await setup();
+    await f.db
+      .update(schema.agents)
+      .set({ setup: { role: null, done: [], reads: "public_channels" } })
+      .where(eq(schema.agents.id, f.agent.id));
+    const { text: librarian } = await routineRun();
+    expect(librarian).toContain("hand_off posts in #general. You don't read that conversation.");
+    expect(librarian).not.toContain("O checkout caiu de novo");
+    expect(librarian).not.toContain("Vou olhar os e-mails de suporte");
+  });
+
   test("access act and report always say what they allow; a late run says how late and since when", async () => {
     f = await setup();
     const { text } = await routineRun({ access: "act", report: "always", lateMinutes: 310 });
