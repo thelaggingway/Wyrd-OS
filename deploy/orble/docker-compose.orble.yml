@@ -1,0 +1,42 @@
+# Wyrd-OS on an Orble box: the app trusts Orble's HTTPS interception, and two services let the box sleep when idle.
+# Install beside docker-compose.yml: this file as docker-compose.override.yml, this folder's other files in
+# ./watchdog, and /etc/wyrd-watchdog.env (mode 600) with OPERATOR_TOKEN (the server's OPERATOR_API_READ_TOKEN),
+# OPERATOR_URL=http://agentes:3001 and optionally IDLE_MIN, DUE_MARGIN_MIN, WAKE_GRACE_MIN, INTERVAL_S.
+# Orble boxes have no systemd: Docker's restart policies start both services when the box boots.
+services:
+  agentes:
+    volumes:
+      - /usr/local/share/ca-certificates/orble-account.crt:/etc/ssl/orble-account.crt:ro
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/orble-account.crt
+    depends_on:
+      guard:
+        condition: service_started
+  # The firewall around 169.254.77.77, put back every minute.
+  guard:
+    build: ./watchdog
+    image: wyrd-watchdog:local
+    command: ["guard.sh"]
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW]
+    restart: unless-stopped
+  # Reads /activity at agentes:3001 and suspends the box through the Self API when idle: the one address let through.
+  watchdog:
+    image: wyrd-watchdog:local
+    command: ["watchdog.sh"]
+    user: "990:990"
+    env_file: /etc/wyrd-watchdog.env
+    networks:
+      default:
+        ipv4_address: 172.30.77.77
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    depends_on: [guard, agentes]
+    restart: unless-stopped
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
