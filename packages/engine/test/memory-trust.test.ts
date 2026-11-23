@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import {
   addChannelMember,
   addRunStep,
@@ -168,6 +168,37 @@ describe("trust from each memory's own source (ADR 0167)", () => {
     expect(out.content.indexOf("lembra: relatórios da Northwind")).toBeGreaterThan(-1);
     expect(out.content.indexOf("lembra: relatórios da Northwind")).toBeLessThan(envelope);
     expect(out.content.indexOf("saem às nove")).toBeGreaterThan(envelope);
+  });
+
+  test("search_context reads a date window, with or without words", async () => {
+    f = await setup({ contextTools: true });
+    const ctx = await runOn(f.owner.id, "o que mudou na proposta da Northwind?");
+    await call(ctx, "remember", {
+      kind: "decision",
+      content: "Northwind proposal v1 at 4 lakh.",
+      basis: "person_said",
+    });
+    await call(ctx, "remember", {
+      kind: "decision",
+      content: "Northwind proposal v3 at 5 lakh.",
+      basis: "person_said",
+    });
+    // v1 was written three weeks ago.
+    const old = new Date(Date.now() - 21 * 86_400_000);
+    await f.db
+      .update(schema.searchDocuments)
+      .set({ sourceCreatedAt: old })
+      .where(sql`${schema.searchDocuments.body} like '%v1 at%'`);
+    const week = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const recent = await call(ctx, "search_context", { after: week, kinds: ["context_item"] });
+    expect([recent.content.includes("v3 at"), recent.content.includes("v1 at")]).toEqual([true, false]);
+    const earlier = await call(ctx, "search_context", { query: "Northwind", before: week, kinds: ["context_item"] });
+    expect([earlier.content.includes("v1 at"), earlier.content.includes("v3 at")]).toEqual([true, false]);
+    const both = await call(ctx, "search_context", { after: old.toISOString().slice(0, 10), sort: "oldest" });
+    expect(both.content.indexOf("v1 at")).toBeLessThan(both.content.indexOf("v3 at"));
+    expect(both.content.indexOf("v1 at")).toBeGreaterThan(-1);
+    expect((await call(ctx, "search_context", {})).content).toContain("Give a `query`");
+    expect((await call(ctx, "search_context", { after: "yesterday-ish" })).content).toContain("ISO 8601");
   });
 });
 

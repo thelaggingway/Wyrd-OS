@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { schema } from "@agenteschat/db";
+import { eq, schema } from "@agenteschat/db";
 import { type ModelRequest, systemText } from "@agenteschat/providers";
 import {
   appendSourceToWiki,
@@ -446,6 +446,23 @@ describe("agents", () => {
     expect(listed).toEqual(expect.arrayContaining(["search_wiki", "read_wiki_page"]));
     expect(listed).not.toContain("create_wiki_page");
     expect(listed).not.toContain("update_wiki_page");
+  });
+
+  test("an agent reads a page's dates, so it can tell an old decision from a new one", async () => {
+    f = await setup({ wikiTools: true });
+    const page = await createWikiPage(wikiDeps(), person(f.owner.id), f.org.id, {
+      title: "Pricing",
+      body: "Quarterly billing since November.",
+    });
+    await f.db
+      .update(schema.wikiPages)
+      .set({ createdAt: new Date("2026-10-01T09:00:00Z"), updatedAt: new Date("2026-11-02T09:00:00Z") })
+      .where(eq(schema.wikiPages.id, page.id));
+    const tools = await createWikiToolSource({ pubsub: f.pubsub, search: f.context }).tools({} as ToolContext);
+    const ctx = { db: f.db, orgId: f.org.id, agentId: f.agent.id, runId: crypto.randomUUID(), channelId: f.general.id };
+    const read = tools.find((t) => t.name === "read_wiki_page");
+    const out = await read?.execute({ page: "pricing" }, ctx as ToolContext);
+    expect(out?.content).toContain("created 2026-10-01, updated 2026-11-02");
   });
 
   test("channel membership is not needed to read the wiki; it is org-wide", async () => {

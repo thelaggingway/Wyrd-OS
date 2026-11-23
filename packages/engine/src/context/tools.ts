@@ -1,3 +1,4 @@
+import type { SearchQuery } from "@agenteschat/adapters";
 import {
   and,
   arrayContained,
@@ -138,6 +139,29 @@ export async function speakersOf(db: Database, items: ContextItem[]): Promise<Ma
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
+/**
+ * Wyrd-OS (MODIFICATIONS.md): `search_context`'s date window. Without words it lists the window newest first, so a
+ * query or a date is required: an empty search of everything would only list the newest few lines of the workspace.
+ */
+function searchWindow(
+  input: Record<string, unknown>,
+): { filters: Pick<SearchQuery, "after" | "before" | "sort"> } | { error: string } {
+  const at = (key: "after" | "before") => {
+    const v = str(input[key]);
+    if (!v) return undefined;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const after = at("after");
+  const before = at("before");
+  if (after === null || before === null) return { error: "`after` and `before` are ISO 8601 dates or times." };
+  if (!str(input.query) && !after && !before) return { error: "Give a `query`, or `after`/`before` to list a window." };
+  if (after && before && after >= before) return { error: "`after` must be earlier than `before`." };
+  const sort =
+    input.sort === "newest" || input.sort === "oldest" || input.sort === "relevance" ? input.sort : undefined;
+  return { filters: { after, before, sort: sort ?? (str(input.query) ? undefined : "newest") } };
+}
+
 /** The tool that reopens what a history shows cut short (token-trim B9, `cutOldToolSteps`). */
 export const EXPAND_TOOL = "expand";
 
@@ -189,12 +213,20 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
     {
       name: "search_context",
       description:
-        "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private).",
+        "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private). With `after` or `before` it reads only what was written in that window, and without `query` it lists everything there, newest first: what changed today, or how something evolved over weeks.",
       scope: "context:read",
       inputSchema: {
         type: "object",
         properties: {
           query: { type: "string", minLength: 1, maxLength: 500 },
+          // Wyrd-OS (MODIFICATIONS.md): the index's date window and order (ADR 0123), for agents too.
+          after: {
+            type: "string",
+            format: "date-time",
+            description: "Only what was written at or after this time (ISO 8601; a date alone is 00:00 UTC).",
+          },
+          before: { type: "string", format: "date-time", description: "Only what was written before this time." },
+          sort: { type: "string", enum: ["relevance", "newest", "oldest"] },
           kinds: {
             type: "array",
             items: {
@@ -204,10 +236,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           },
           limit: { type: "integer", minimum: 1, maximum: 20 },
         },
-        required: ["query"],
         additionalProperties: false,
       },
       async execute(input, ctx) {
+        const window = searchWindow(input);
+        if ("error" in window) return { content: window.error, isError: true };
         const [{ channels, own: ownScope, asker }, person, reader] = await Promise.all([
           recallScope(ctx),
           personRequester(ctx),
@@ -228,6 +261,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                 limit,
                 reach: channels,
                 wordsOnly,
+                ...window.filters,
               })
             : searchVisible(deps, {
                 orgId: ctx.orgId,
@@ -236,13 +270,19 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                 kinds,
                 limit,
                 wordsOnly,
+                ...window.filters,
               })
           ).then(async (found) => wikiHitsForAgent(ctx.db, await wikiActorOfCall(ctx), found)),
-          kinds
+          kinds || !str(input.query)
             ? []
             : ownPastSteps(ctx.db, ctx.orgId, ctx.agentId, ctx.runId, ownScope ?? channels, str(input.query), dm),
           handed.length > 0 && person && (!kinds || kinds.includes("message" as never))
-            ? searchHandedFor(deps, ctx, handed, person, { text: str(input.query), limit, wordsOnly })
+            ? searchHandedFor(deps, ctx, handed, person, {
+                text: str(input.query),
+                limit,
+                wordsOnly,
+                ...window.filters,
+              })
             : [],
         ]);
         const usualIds = new Set(usual.map((h) => h.sourceId));
@@ -1125,7 +1165,12 @@ async function searchHandedFor(
   ctx: ToolContext,
   handed: string[],
   person: string,
-  { text, limit, wordsOnly }: { text: string; limit: number; wordsOnly: boolean },
+  {
+    text,
+    limit,
+    wordsOnly,
+    ...filters
+  }: { text: string; limit: number; wordsOnly: boolean } & Pick<SearchQuery, "after" | "before" | "sort">,
 ) {
   // ponytail: a person's hit behind HANDED_SEARCH_POOL better ones of other people is missed; filter in SQL if it bites.
   const pool = await searchVisible(deps, {
@@ -1135,6 +1180,7 @@ async function searchHandedFor(
     kinds: ["message"],
     limit: HANDED_SEARCH_POOL,
     wordsOnly,
+    ...filters,
   });
   const theirs = await Promise.all(
     pool.map((h) =>

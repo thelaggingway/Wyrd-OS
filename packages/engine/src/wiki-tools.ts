@@ -33,6 +33,9 @@ const failed = (error: unknown): ToolOutput => ({
   isError: true,
 });
 
+/** Wyrd-OS (MODIFICATIONS.md): pages carry their dates, so an agent can tell an old decision from a new one. */
+const day = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+
 /** Shown when an agent tries to write with nobody who could have asked. */
 export const WIKI_WRITE_REFUSAL =
   "Not allowed: nobody asked for this, or the person who asked can't edit the wiki. An agent writes to the wiki when a person who may asks for it, or a routine a person set up says so. Offer to save it instead.";
@@ -113,7 +116,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
               note,
               ...pages.map(
                 (p) =>
-                  `- [[${p.title}]] (${p.folder ? `${p.folder}/` : ""}${p.slug}, v${p.version}): ${cutText(p.body.replace(/\s+/g, " "), 200)}`,
+                  `- [[${p.title}]] (${p.folder ? `${p.folder}/` : ""}${p.slug}, v${p.version}, updated ${day(p.updatedAt)}): ${cutText(p.body.replace(/\s+/g, " "), 200)}`,
               ),
             ]
               .filter(Boolean)
@@ -126,7 +129,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
     },
     {
       name: "read_wiki_page",
-      description: "Read a wiki page in full (by title or slug), with its version and what links to it.",
+      description: "Read a wiki page in full (by title or slug), with its version, its dates and what links to it.",
       scope: "wiki:read",
       inputSchema: {
         type: "object",
@@ -155,7 +158,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
           const backlinks = p.backlinks.filter((b) => b.kind === "page").map((b) => `[[${b.title}]]`);
           return {
             content: [
-              `# ${p.title} (slug ${p.slug}, version ${p.version}${p.folder ? `, folder ${p.folder}` : ""}${p.locked ? ", locked" : ""}${p.canEdit ? "" : ", read-only for you"})`,
+              `# ${p.title} (slug ${p.slug}, version ${p.version}, created ${day(p.createdAt)}, updated ${day(p.updatedAt)}${p.folder ? `, folder ${p.folder}` : ""}${p.locked ? ", locked" : ""}${p.canEdit ? "" : ", read-only for you"})`,
               p.tags.length ? `Tags: ${p.tags.join(", ")}` : "",
               cutText(p.body, 40_000),
               backlinks.length ? `Linked from: ${backlinks.join(", ")}` : "",
