@@ -2,7 +2,6 @@ import { holdEvents, type PubSub } from "@agenteschat/adapters";
 import { and, type Database, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { serverText } from "@agenteschat/i18n";
 import type { AppLocale } from "@agenteschat/i18n/locale";
-import { modelInfo } from "@agenteschat/providers";
 import {
   agentsLike,
   agentsLikeText,
@@ -105,11 +104,9 @@ export interface TeamAgent {
   /** What the receipt's "Abrir com a tarefa" types in its DM, never sent. */
   firstTask: string | null;
   /**
-   * Wyrd-OS (MODIFICATIONS.md): set only by a team template, never from an agent's proposal. `model`: thinks with
-   * this catalog model on the workspace's own key for its provider, when it has one (else the usual AI). `scopes`:
-   * fewer tools than the defaults. `reads`: every public channel without joining them (`agentSearchChannels`).
+   * Wyrd-OS (MODIFICATIONS.md): set only by a team template, never from an agent's proposal. `scopes`: fewer tools
+   * than the defaults. `reads`: every public channel without joining them (`agentSearchChannels`).
    */
-  model?: string;
   scopes?: readonly string[];
   reads?: "public_channels";
 }
@@ -603,7 +600,6 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
               suggestion,
             });
           }
-          const model = a.model && (await hasKeyFor(tx, orgId, a.model)) ? a.model : undefined;
           let row = await createAgent(
             tx,
             userId,
@@ -613,7 +609,6 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
               handle: a.handle,
               role: a.role,
               instructions: a.instructions,
-              ...(model ? { model } : {}),
               ...(a.scopes ? { scopes: a.scopes } : {}),
             },
             NEW_AGENT_DEFAULTS,
@@ -705,9 +700,7 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
   // Its AI, one agent after the other: an account of the clicker's thinks for one agent at most.
   const noAi: string[] = [];
   let thinking = false;
-  for (const [i, agent] of made.agents.entries()) {
-    // A template agent pinned to a model on the workspace's key keeps it (Wyrd-OS: the Librarian on DeepSeek Flash).
-    if (p.agents[i]?.model && agent.model === p.agents[i]?.model) continue;
+  for (const agent of made.agents) {
     const ai = await suggestAgentAi(deps, orgId, userId);
     if (ai.kind === "none") noAi.push(agent.id);
     if (ai.kind !== "account") continue;
@@ -744,24 +737,6 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
     `${person?.name ?? "A person"} created ${(await isPersonalWorkspace(deps.db, orgId)) ? "their agents" : "the team"}: ${who}; ${ids.routineIds.length} routines${ids.skillIds.length ? `, ${ids.skillIds.length} skills` : ""}.${skipped.includes("skills") ? " The skills wait for an admin." : ""}${skipped.includes("weekly") ? " Your weekly check wasn't made: only who manages your routines makes it." : ""} The card already offers a first task per agent${(await isPersonalWorkspace(deps.db, orgId)) ? "" : " and inviting the people"}: say it is ready in one short line, without repeating them.`,
   );
   return { card: done, noAi };
-}
-
-/** Wyrd-OS: whether the workspace has a live key for this catalog model's provider (the gateway then uses it). */
-async function hasKeyFor(db: Database, orgId: string, model: string) {
-  const provider = modelInfo(model)?.provider;
-  if (!provider) return false;
-  const [key] = await db
-    .select({ id: schema.providerCredentials.id })
-    .from(schema.providerCredentials)
-    .where(
-      and(
-        eq(schema.providerCredentials.orgId, orgId),
-        eq(schema.providerCredentials.provider, provider),
-        isNull(schema.providerCredentials.revokedAt),
-      ),
-    )
-    .limit(1);
-  return Boolean(key);
 }
 
 /** A skill written on the card, as a person writes one in Settings › Skills (a taken name gets `-2`). */

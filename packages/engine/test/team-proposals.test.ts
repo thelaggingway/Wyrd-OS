@@ -532,20 +532,13 @@ describe("team templates", () => {
 
   test("Wyrd-OS: the Librarian comes with a business team, reads every public channel, writes only the wiki and Drive", async () => {
     f = await setup({ rightHand: true });
-    const [key] = await f.db
-      .select()
-      .from(schema.providerCredentials)
-      .where(eq(schema.providerCredentials.id, f.credential.id));
-    if (!key) throw new Error("fixture key");
-    await f.db
-      .insert(schema.providerCredentials)
-      .values({ ...key, id: crypto.randomUUID(), provider: "deepseek", label: "DeepSeek" });
     const open = await createChannel(f.db, f.owner.id, f.org.id, { name: "sales" });
     const shut = await createChannel(f.db, f.owner.id, f.org.id, { name: "board", visibility: "private" });
     const used = await useTeamTemplate({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "services", "en");
     expect(used.state).toBe("created");
     const [lib] = await f.db.select().from(schema.agents).where(eq(schema.agents.handle, "librarian"));
-    expect([lib?.model, lib?.setup?.reads]).toEqual([LIBRARIAN.model, "public_channels"]);
+    // No model pinned: it thinks with the workspace's usual AI, whichever provider that is.
+    expect([lib?.model, lib?.setup?.reads]).toEqual([NEW_AGENT_DEFAULTS.model, "public_channels"]);
     expect(lib?.instructions).toContain("NEVER INVENT ANYTHING");
     const scopes = (
       await f.db
@@ -564,14 +557,6 @@ describe("team templates", () => {
     expect(members.map((m) => m.channelId)).not.toContain(open.id);
     const reach = await agentSearchChannels(f.db, f.org.id, lib?.id ?? "", "");
     expect([reach.includes(open.id), reach.includes(shut.id)]).toEqual([true, false]);
-    // Without a DeepSeek key it keeps the workspace's usual AI instead of a model nobody can call.
-    await f.db
-      .update(schema.providerCredentials)
-      .set({ revokedAt: new Date() })
-      .where(eq(schema.providerCredentials.provider, "deepseek"));
-    await useTeamTemplate({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "agency", "en");
-    const [second] = await f.db.select().from(schema.agents).where(eq(schema.agents.handle, "librarian-2"));
-    expect(second?.model).not.toBe(LIBRARIAN.model);
   });
 
   test("a personal workspace lists templates for one person's life, each agent in its DM with no channel", async () => {

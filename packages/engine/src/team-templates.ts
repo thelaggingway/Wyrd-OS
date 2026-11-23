@@ -273,14 +273,14 @@ function librarianInput(taken: Set<string>) {
 
 /**
  * The template-only fields `checkTeam` never reads from a proposal (an agent's own card can't pin a model or widen what
- * an agent reads): the Librarian's model, its narrower tools and its reach over every public channel.
+ * an agent reads): the Librarian's narrower tools and its reach over every public channel.
  */
 function withTemplateExtras(team: TeamParams): TeamParams {
   return {
     ...team,
     agents: team.agents.map((a) =>
       a.name === LIBRARIAN.name && a.handle.replace(/-\d+$/, "") === LIBRARIAN.handle
-        ? { ...a, model: LIBRARIAN.model, scopes: LIBRARIAN.scopes, reads: LIBRARIAN.reads }
+        ? { ...a, scopes: LIBRARIAN.scopes, reads: LIBRARIAN.reads }
         : a,
     ),
   };

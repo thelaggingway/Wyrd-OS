@@ -79,8 +79,6 @@ export const LIBRARIAN = {
   line: "Keeps the wiki each night: decisions, how-tos and files from the day, linked and dated, from sources only.",
   instructions: INSTRUCTIONS,
   look: { color: "graphite", eyes: "round", accessory: "beanie" } satisfies AgentAppearance,
-  /** Cheap at volume; used only when the workspace has a DeepSeek key, else the workspace's usual AI. */
-  model: "deepseek-flash",
   /** Read-only searches everywhere it may read; writes to the wiki and the Drive alone. */
   scopes: ["context:read", "issues:read", "drive:read", "drive:write", "skills:read", "wiki:read", "wiki:write"],
   reads: "public_channels" as const,
