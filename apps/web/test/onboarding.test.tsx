@@ -233,7 +233,7 @@ describe("the steps", () => {
     const state = newcomer(false);
     await renderApp("/onboarding", { api: createFakeApi(state) });
     await settle(10);
-    expect(document.querySelector(".onb__say")?.textContent).toContain("Eu sou o Lodi.");
+    expect(document.querySelector(".onb__say")?.textContent).toContain("Eu sou o Chief of Staff.");
     // The rail's first step is the question on screen until it is answered, then the team's name.
     const firstStep = () => document.querySelector(".onb__step-name")?.textContent;
     expect(firstStep()).toBe("Para que vai usar");

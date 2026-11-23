@@ -194,13 +194,16 @@ export function sceneTeam<A extends { id: string }>(agents: readonly A[], lead: 
  * `RIGHT_HAND_DEFAULTS` (packages/engine/src/right-hand.ts).
  */
 export const RIGHT_HAND_DEFAULT = {
-  name: "Lodi",
+  name: "Chief of Staff",
   appearance: { color: "teal", eyes: "happy", accessory: "headset" },
 } as const;
 
-/** Where its name comes from ("lodestar") is told only while it keeps that name: a renamed one has another story. */
+/**
+ * Where its name comes from ("lodestar") is told only while it is called Lodi: a renamed one has another story.
+ * Wyrd-OS (MODIFICATIONS.md): the default is the Chief of Staff, which has none.
+ */
 export const tellsNameStory = (agent: Pick<Agent, "builtin" | "name"> | null | undefined) =>
-  isRightHand(agent) && agent?.name === RIGHT_HAND_DEFAULT.name;
+  isRightHand(agent) && agent?.name === "Lodi";
 
 /** Where a workspace whose onboarding just ended opens, and `/me` as it is now (null: ask for it). */
 export interface OpenedAt {

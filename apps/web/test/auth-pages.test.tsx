@@ -1419,7 +1419,7 @@ describe("Onboarding: the workspace's name", () => {
     await start();
     expect(screen().getByRole("heading", { name: "Como se chama o seu workspace?" })).toBeTruthy();
     expect(screen().getByRole("navigation", { name: "Passos para começar" })).toBeTruthy();
-    expect(document.querySelector(".onb__say")?.textContent).toContain("Eu sou o Lodi.");
+    expect(document.querySelector(".onb__say")?.textContent).toContain("Eu sou o Chief of Staff.");
     expect(document.body.textContent).not.toContain("Oi, eu sou a Ada");
     // A name is no misspelling.
     expect(screen().getByLabelText("Nome").getAttribute("spellcheck")).toBe("false");

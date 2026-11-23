@@ -717,7 +717,7 @@ describe("the rest of the app through the right hand", () => {
     const notices = await f.db.select().from(schema.messages).where(eq(schema.messages.orgId, f.org.id));
     const told = notices.find((m) => (m.meta.notice as { kind?: string } | undefined)?.kind === "run_stopped");
     expect(told?.body).toStartWith(`${lodi.name}, at ana's word, stopped your task`);
-    const self = await act(f, ctx, { action: "stop_work", input: { agent: "@lodi" } });
+    const self = await act(f, ctx, { action: "stop_work", input: { agent: "@chief" } });
     expect(self).toMatchObject({ isError: true, content: "That is you: say so, and stop nothing." });
     const none = await act(f, ctx, { action: "continue_work", input: { agent: "@dev" } });
     expect(none.isError).toBe(true);

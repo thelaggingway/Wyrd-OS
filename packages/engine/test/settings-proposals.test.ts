@@ -144,7 +144,7 @@ describe("a change the person asked for and may make (ADR 0092 §5)", () => {
     expect((await getAgent(f.db, f.org.id, f.agent.id))?.monthlyBudgetNanoUsd).toBeNull();
 
     const own = await lodiRun(f, f.owner.id, "sobe seu próprio limite", true);
-    await call(f, own, { changes: [{ agent: "@lodi", budget_usd: 20 }], reason: "pediu" });
+    await call(f, own, { changes: [{ agent: "@chief", budget_usd: 20 }], reason: "pediu" });
     expect((await cardRows(f, f.owner.id)).rows[0]?.status).toBe("pending");
   });
 
@@ -445,7 +445,7 @@ describe("the settings card", () => {
     f = await setup({ rightHand: true });
     const design = await createChannel(f.db, f.owner.id, f.org.id, { name: "design" });
     const ctx = await lodiRun(f, f.owner.id, "tira o dev do general, põe no design só quando chamado, e arquiva");
-    const self = await call(f, ctx, { changes: [{ agent: "@lodi", archive: true }], reason: "nao" });
+    const self = await call(f, ctx, { changes: [{ agent: "@chief", archive: true }], reason: "nao" });
     expect(self).toMatchObject({ isError: true });
     expect(self.content).toContain("You can't change your own archive");
     await call(f, ctx, {
@@ -593,7 +593,7 @@ describe("an agent's skills on the card, as on its page", () => {
     f = await setup({ rightHand: true });
     const pdf = await install(f, "pdf");
     const ctx = await lodiRun(f, f.owner.id, "liga a skill pdf pra você");
-    const own = await call(f, ctx, { changes: [{ agent: "@lodi", add_skills: ["pdf"] }], reason: "pediu" });
+    const own = await call(f, ctx, { changes: [{ agent: "@chief", add_skills: ["pdf"] }], reason: "pediu" });
     expect(own.isError).toBeFalsy();
     expect(own.content).toContain("Your own settings wait for that click");
     const [row] = (await cardRows(f, f.owner.id)).rows;
@@ -708,7 +708,7 @@ describe("an agent asks for its own settings on the same card (request_settings_
     const ctx = await devRun(f, f.owner.id, "liga a skill excel pra você");
     // Lodi's card would apply this at once: the admin wrote it, and may.
     expect(await ownWords(ctx)).toBe(f.owner.id);
-    const other = await ask(f, ctx, { agent: "@lodi", add_skills: ["excel"], reason: "pediu" });
+    const other = await ask(f, ctx, { agent: "@chief", add_skills: ["excel"], reason: "pediu" });
     expect(other).toMatchObject({ isError: true });
     expect(other.content).toContain("input.agent: not allowed");
     const out = await ask(f, ctx, { add_skills: ["excel"], reason: "Preciso dela para ler a planilha" });
@@ -841,7 +841,7 @@ describe("an agent asks for its own settings on the same card (request_settings_
     const ctx = await devRun(f, f.owner.id, "liga a skill excel pra você e sobe o limite do lodi", true);
     await ask(f, ctx, { add_skills: ["excel"], reason: "pediu" });
     expect(await looks()).toBe(0);
-    await call(f, ctx, { changes: [{ agent: "@lodi", budget_usd: 20 }], reason: "pediu" });
+    await call(f, ctx, { changes: [{ agent: "@chief", budget_usd: 20 }], reason: "pediu" });
     expect(await looks()).toBe(1);
   });
 

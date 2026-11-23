@@ -255,7 +255,7 @@ describe("workspace reset", () => {
       .select({ handle: schema.agents.handle, builtin: schema.agents.builtin })
       .from(schema.agents)
       .where(and(eq(schema.agents.orgId, f.org.id), isNull(schema.agents.deletedAt)));
-    expect(live).toEqual([{ handle: "lodi", builtin: "right_hand" }]);
+    expect(live).toEqual([{ handle: "chief", builtin: "right_hand" }]);
     const [dev] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
     expect(dev?.deletedAt).not.toBeNull();
 

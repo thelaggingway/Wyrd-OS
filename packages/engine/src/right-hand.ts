@@ -37,10 +37,13 @@ export const RIGHT_HAND = "right_hand" as const;
 
 export const isRightHand = (a: { builtin?: string | null } | null | undefined) => a?.builtin === RIGHT_HAND;
 
-/** What it starts with. The name is the same in every language; admins may rename it and change its look. */
+/**
+ * What it starts with. The name is the same in every language; admins may rename it and change its look. Wyrd-OS
+ * (MODIFICATIONS.md): the Chief of Staff, not upstream's Lodi.
+ */
 export const RIGHT_HAND_DEFAULTS = {
-  name: "Lodi",
-  handle: "lodi",
+  name: "Chief of Staff",
+  handle: "chief",
   model: AUTO_MODEL,
   appearance: { color: "teal", eyes: "happy", accessory: "headset" },
 } as const;
