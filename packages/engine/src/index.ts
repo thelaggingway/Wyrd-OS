@@ -176,6 +176,7 @@ export * from "./jev-key";
 export * from "./jobs";
 export * from "./judge";
 export * from "./key-line";
+export * from "./librarian";
 export * from "./limits";
 export * from "./live";
 export * from "./machine-access";

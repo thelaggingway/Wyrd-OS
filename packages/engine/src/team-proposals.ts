@@ -2,6 +2,7 @@ import { holdEvents, type PubSub } from "@agenteschat/adapters";
 import { and, type Database, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { serverText } from "@agenteschat/i18n";
 import type { AppLocale } from "@agenteschat/i18n/locale";
+import { modelInfo } from "@agenteschat/providers";
 import {
   agentsLike,
   agentsLikeText,
@@ -103,6 +104,14 @@ export interface TeamAgent {
   routines: ProposedRoutine[];
   /** What the receipt's "Abrir com a tarefa" types in its DM, never sent. */
   firstTask: string | null;
+  /**
+   * Wyrd-OS (MODIFICATIONS.md): set only by a team template, never from an agent's proposal. `model`: thinks with
+   * this catalog model on the workspace's own key for its provider, when it has one (else the usual AI). `scopes`:
+   * fewer tools than the defaults. `reads`: every public channel without joining them (`agentSearchChannels`).
+   */
+  model?: string;
+  scopes?: readonly string[];
+  reads?: "public_channels";
 }
 
 export interface TeamSkill {
@@ -594,14 +603,32 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
               suggestion,
             });
           }
+          const model = a.model && (await hasKeyFor(tx, orgId, a.model)) ? a.model : undefined;
           let row = await createAgent(
             tx,
             userId,
             orgId,
-            { name: a.name, handle: a.handle, role: a.role, instructions: a.instructions },
+            {
+              name: a.name,
+              handle: a.handle,
+              role: a.role,
+              instructions: a.instructions,
+              ...(model ? { model } : {}),
+              ...(a.scopes ? { scopes: a.scopes } : {}),
+            },
             NEW_AGENT_DEFAULTS,
             { via: found.proposedBy, pubsub: events.pubsub },
           );
+          if (a.reads) {
+            const [read] = await tx
+              .update(agents)
+              .set({
+                setup: sql`coalesce(${agents.setup}, '{}'::jsonb) || ${JSON.stringify({ reads: a.reads })}::jsonb`,
+              })
+              .where(eq(agents.id, row.id))
+              .returning();
+            if (read) row = read as typeof row;
+          }
           if (a.appearance) row = await setAgentAppearance(tx, userId, orgId, row.id, a.appearance, events);
           // An admin's team gets the apps every agent has; anyone else's starts without access (ADR 0085 §5).
           if (admin) await giveApps(tx, userId, orgId, row.id, []);
@@ -678,7 +705,9 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
   // Its AI, one agent after the other: an account of the clicker's thinks for one agent at most.
   const noAi: string[] = [];
   let thinking = false;
-  for (const agent of made.agents) {
+  for (const [i, agent] of made.agents.entries()) {
+    // A template agent pinned to a model on the workspace's key keeps it (Wyrd-OS: the Librarian on DeepSeek Flash).
+    if (p.agents[i]?.model && agent.model === p.agents[i]?.model) continue;
     const ai = await suggestAgentAi(deps, orgId, userId);
     if (ai.kind === "none") noAi.push(agent.id);
     if (ai.kind !== "account") continue;
@@ -715,6 +744,24 @@ export async function createTeam(deps: TeamDeps, userId: string, orgId: string, 
     `${person?.name ?? "A person"} created ${(await isPersonalWorkspace(deps.db, orgId)) ? "their agents" : "the team"}: ${who}; ${ids.routineIds.length} routines${ids.skillIds.length ? `, ${ids.skillIds.length} skills` : ""}.${skipped.includes("skills") ? " The skills wait for an admin." : ""}${skipped.includes("weekly") ? " Your weekly check wasn't made: only who manages your routines makes it." : ""} The card already offers a first task per agent${(await isPersonalWorkspace(deps.db, orgId)) ? "" : " and inviting the people"}: say it is ready in one short line, without repeating them.`,
   );
   return { card: done, noAi };
+}
+
+/** Wyrd-OS: whether the workspace has a live key for this catalog model's provider (the gateway then uses it). */
+async function hasKeyFor(db: Database, orgId: string, model: string) {
+  const provider = modelInfo(model)?.provider;
+  if (!provider) return false;
+  const [key] = await db
+    .select({ id: schema.providerCredentials.id })
+    .from(schema.providerCredentials)
+    .where(
+      and(
+        eq(schema.providerCredentials.orgId, orgId),
+        eq(schema.providerCredentials.provider, provider),
+        isNull(schema.providerCredentials.revokedAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(key);
 }
 
 /** A skill written on the card, as a person writes one in Settings › Skills (a taken name gets `-2`). */

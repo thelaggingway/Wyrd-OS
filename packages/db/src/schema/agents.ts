@@ -186,6 +186,11 @@ export const agents = pgTable(
       hello?: string;
       starter?: string;
       apps?: Record<string, "read" | "write">;
+      /**
+       * Wyrd-OS (MODIFICATIONS.md): `public_channels` reads every public channel of its workspace without being a
+       * member (`agentSearchChannels`), so the router never picks it there. Set only by a template (the Librarian).
+       */
+      reads?: "public_channels";
     }>(),
     /**
      * Its computer (ADR 0025): the connected machine it works on; null = none yet (the workspace's own computer

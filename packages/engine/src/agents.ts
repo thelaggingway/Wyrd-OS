@@ -279,13 +279,18 @@ export async function createAgent(
      * card (ADR 0164): how it introduced itself, the personal starter it began as and the apps it was made to use.
      */
     setup?: { role: string | null } & SetupExtras;
+    /**
+     * Wyrd-OS (MODIFICATIONS.md): fewer tools than every agent's defaults, for a template agent made for one job (the
+     * Librarian). Only narrows: a scope outside `DEFAULT_AGENT_SCOPES` is dropped, so it needs no other permission.
+     */
+    scopes?: readonly string[];
   },
   defaults: { model: string },
   /** `via`: the agent whose card it was created from (the audit's "via"). */
   options: { remember?: boolean; via?: string; pubsub?: PubSub } = {},
 ): Promise<Agent> {
   const membership = await requirePermission(db, actorId, orgId, "create_agents");
-  const { autonomy, audienceMode, audience, editors, appearance, setup, approvalsLevel, ...fields } = input;
+  const { autonomy, audienceMode, audience, editors, appearance, setup, approvalsLevel, scopes, ...fields } = input;
   // `create_agents` makes the creator's own agent (ADR 0085 §5): another owner, or none, is for who edits any agent.
   // So whoever gets this far may also set its Autonomia (ADR 0094): an admin or the new agent's owner.
   if (input.ownerUserId !== undefined && input.ownerUserId !== actorId && !can(membership, "manage_agents")) {
@@ -386,7 +391,10 @@ export async function createAgent(
         tx,
         orgId,
         made.id,
-        DEFAULT_AGENT_SCOPES.map((scope) => ({ connectionId: null, scope })),
+        DEFAULT_AGENT_SCOPES.filter((scope) => !scopes || scopes.includes(scope)).map((scope) => ({
+          connectionId: null,
+          scope,
+        })),
       );
       if (broad) {
         const apps = await tx

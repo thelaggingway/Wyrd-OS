@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { and, eq, inArray, isNull, schema } from "@agenteschat/db";
 import {
+  agentSearchChannels,
   BUSINESS_TEMPLATES,
   createAgent,
+  createChannel,
   createRole,
   createSetupToolSource,
   createTeam,
   createToolGateway,
   denyTeam,
+  LIBRARIAN,
   listTeamTemplates,
   NEW_AGENT_DEFAULTS,
   OFFER_ANSWERS_TOOL,
@@ -497,6 +500,8 @@ describe("team templates", () => {
       ["Iara", "atendimento"],
       ["Caio", "financeiro"],
       ["Ada", "eng"],
+      // Wyrd-OS: every business team also gets the Librarian, in no channel (it reads the public ones).
+      ["Librarian", ""],
     ]);
     expect(software?.team.weekly).not.toBeNull();
     expect(software?.team.skills.map((s) => s.title)).toEqual(["Tom de voz", "Régua de cobrança"]);
@@ -507,21 +512,66 @@ describe("team templates", () => {
   test("Criar o time makes the template's team in one call: its card reads created, with no question after", async () => {
     f = await setup({ rightHand: true });
     // What the conversation hears: the card once, already made, so no other device shows it open for a moment.
-    const heard: { type: string; message?: { meta: Record<string, unknown> } }[] = [];
+    const heard: { type: string; messageId?: string; message?: { meta: Record<string, unknown> } }[] = [];
     const pubsub = { ...f.pubsub, publish: async (_topic: string, e: unknown) => void heard.push(e as never) };
     const used = await useTeamTemplate({ db: f.db, pubsub }, f.owner.id, f.org.id, "clinic", "pt-BR");
     expect(used).toMatchObject({ state: "created", error: null });
     const announced = heard.filter((e) => e.type === "message.created");
     expect(announced).toHaveLength(1);
-    expect(announced[0]?.message?.meta.actionCard).toMatchObject({ state: "created" });
+    // Wyrd-OS: the Librarian's instructions make the card too big to go inline; the apps fetch it by id.
+    expect(announced[0]?.messageId).toBe(used.messageId);
     const card = await cardOf(f, used.messageId);
     expect(card.params.template).toBe("clinic");
     expect(card.state).toBe("created");
-    expect(card.params.agents.map((a) => a.name)).toEqual(["Nina", "Caio", "Iara"]);
-    expect(card.created?.agentIds).toHaveLength(3);
+    expect(card.params.agents.map((a) => a.name)).toEqual(["Nina", "Caio", "Iara", "Librarian"]);
+    expect(card.created?.agentIds).toHaveLength(4);
     const rows = await f.db.select().from(schema.messages).where(eq(schema.messages.channelId, used.channelId));
     expect(rows.some((m) => m.meta.replyChips)).toBe(false);
     expect(rows.filter((m) => m.authorType === "agent")).toHaveLength(1);
+  });
+
+  test("Wyrd-OS: the Librarian comes with a business team, reads every public channel, writes only the wiki and Drive", async () => {
+    f = await setup({ rightHand: true });
+    const [key] = await f.db
+      .select()
+      .from(schema.providerCredentials)
+      .where(eq(schema.providerCredentials.id, f.credential.id));
+    if (!key) throw new Error("fixture key");
+    await f.db
+      .insert(schema.providerCredentials)
+      .values({ ...key, id: crypto.randomUUID(), provider: "deepseek", label: "DeepSeek" });
+    const open = await createChannel(f.db, f.owner.id, f.org.id, { name: "sales" });
+    const shut = await createChannel(f.db, f.owner.id, f.org.id, { name: "board", visibility: "private" });
+    const used = await useTeamTemplate({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "services", "en");
+    expect(used.state).toBe("created");
+    const [lib] = await f.db.select().from(schema.agents).where(eq(schema.agents.handle, "librarian"));
+    expect([lib?.model, lib?.setup?.reads]).toEqual([LIBRARIAN.model, "public_channels"]);
+    expect(lib?.instructions).toContain("NEVER INVENT ANYTHING");
+    const scopes = (
+      await f.db
+        .select()
+        .from(schema.agentScopes)
+        .where(eq(schema.agentScopes.agentId, lib?.id ?? ""))
+    )
+      .map((r) => r.scope)
+      .sort();
+    expect(scopes).toEqual([...LIBRARIAN.scopes].sort());
+    // Not a member of #sales, yet it reads it; never the private #board. The router never picks it: it is in no channel.
+    const members = await f.db
+      .select()
+      .from(schema.channelMembers)
+      .where(eq(schema.channelMembers.agentId, lib?.id ?? ""));
+    expect(members.map((m) => m.channelId)).not.toContain(open.id);
+    const reach = await agentSearchChannels(f.db, f.org.id, lib?.id ?? "", "");
+    expect([reach.includes(open.id), reach.includes(shut.id)]).toEqual([true, false]);
+    // Without a DeepSeek key it keeps the workspace's usual AI instead of a model nobody can call.
+    await f.db
+      .update(schema.providerCredentials)
+      .set({ revokedAt: new Date() })
+      .where(eq(schema.providerCredentials.provider, "deepseek"));
+    await useTeamTemplate({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "agency", "en");
+    const [second] = await f.db.select().from(schema.agents).where(eq(schema.agents.handle, "librarian-2"));
+    expect(second?.model).not.toBe(LIBRARIAN.model);
   });
 
   test("a personal workspace lists templates for one person's life, each agent in its DM with no channel", async () => {

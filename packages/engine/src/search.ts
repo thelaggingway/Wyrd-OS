@@ -284,7 +284,30 @@ export async function agentSearchChannels(
       })
       .from(channelMembers)
       .innerJoin(channels, eq(channels.id, channelMembers.channelId))
-      .where(and(eq(channelMembers.orgId, orgId), eq(channelMembers.agentId, agentId), isNull(channels.archivedAt))),
+      .where(and(eq(channelMembers.orgId, orgId), eq(channelMembers.agentId, agentId), isNull(channels.archivedAt)))
+      .then(async (own) => {
+        // Wyrd-OS (MODIFICATIONS.md): an agent made to read every public channel (the Librarian) does, without being
+        // a member, so new channels count at once and the router never picks it there. Private channels and DMs stay
+        // out as for any agent: the filter below keeps only public `channel`s.
+        const [agent] = await db
+          .select({ setup: schema.agents.setup })
+          .from(schema.agents)
+          .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.id, agentId)));
+        if (agent?.setup?.reads !== "public_channels") return own;
+        const mine = new Set(own.map((r) => r.id));
+        const all = await db
+          .select({ id: channels.id, visibility: channels.visibility, kind: channels.kind, dmKey: channels.dmKey })
+          .from(channels)
+          .where(
+            and(
+              eq(channels.orgId, orgId),
+              eq(channels.visibility, "public"),
+              eq(channels.kind, "channel"),
+              isNull(channels.archivedAt),
+            ),
+          );
+        return [...own, ...all.filter((r) => !mine.has(r.id))];
+      }),
   )) as { id: string; visibility: string; kind: string; dmKey: string | null }[];
   const room = rows.find((r) => r.id === currentChannelId && isRoutineRoomKey(r.dmKey));
   const reports = room?.dmKey && !files ? await routineReportChannel(db, orgId, agentId, room.dmKey) : null;

@@ -9,6 +9,7 @@ import { addChannelMember, CHANNEL_NAME_PATTERN } from "./channels";
 import type { ContextDeps } from "./context/summaries";
 import { publishMessageCreated } from "./events";
 import { firstName } from "./format";
+import { LIBRARIAN } from "./librarian";
 import { getMessage, insertMessage, messageView } from "./messages";
 import { requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
@@ -223,22 +224,24 @@ function templateInput(id: TeamTemplateId, locale: AppLocale, org: string, taken
   const personal = isPersonalTemplate(id);
   return {
     lead: t(personal ? "teamTemplates.leadPersonal" : "teamTemplates.lead"),
-    agents: members.map((m) => ({
-      name: MEMBERS[m].name,
-      handle: handles.get(m),
-      role: t(`teamTemplates.agents.${m}.role`),
-      line: t(`teamTemplates.agents.${m}.line`),
-      look: MEMBERS[m].look,
-      channel: personal ? "" : channelOf(m),
-      routines: [
-        {
-          schedule: MEMBERS[m].cron,
-          title: t(`teamTemplates.agents.${m}.routine`),
-          prompt: t(`teamTemplates.agents.${m}.routine`),
-        },
-      ],
-      first_task: t(`teamTemplates.agents.${m}.task`),
-    })),
+    agents: members
+      .map((m) => ({
+        name: MEMBERS[m].name,
+        handle: handles.get(m),
+        role: t(`teamTemplates.agents.${m}.role`),
+        line: t(`teamTemplates.agents.${m}.line`),
+        look: MEMBERS[m].look,
+        channel: personal ? "" : channelOf(m),
+        routines: [
+          {
+            schedule: MEMBERS[m].cron,
+            title: t(`teamTemplates.agents.${m}.routine`),
+            prompt: t(`teamTemplates.agents.${m}.routine`),
+          },
+        ],
+        first_task: t(`teamTemplates.agents.${m}.task`),
+      }))
+      .concat(personal ? [] : [librarianInput(taken)]),
     skills: skillKeys.map((k) => ({
       title: t(`teamTemplates.skills.${k}.name`),
       line: t(`teamTemplates.skills.${k}.line`),
@@ -248,6 +251,38 @@ function templateInput(id: TeamTemplateId, locale: AppLocale, org: string, taken
     // The right hand's weekly check reports on a team's work: one person's agents don't need it (ADR 0159).
     weekly_check: !personal,
     template: id,
+  };
+}
+
+/** Wyrd-OS (MODIFICATIONS.md): every business template's team also gets the Librarian, in no channel (it reads them all). */
+function librarianInput(taken: Set<string>) {
+  let handle = LIBRARIAN.handle;
+  for (let n = 2; taken.has(handle); n++) handle = `${LIBRARIAN.handle}-${n}`;
+  return {
+    name: LIBRARIAN.name,
+    handle,
+    role: LIBRARIAN.role,
+    line: LIBRARIAN.line,
+    instructions: LIBRARIAN.instructions,
+    look: LIBRARIAN.look,
+    channel: "",
+    routines: LIBRARIAN.routines,
+    first_task: LIBRARIAN.firstTask,
+  };
+}
+
+/**
+ * The template-only fields `checkTeam` never reads from a proposal (an agent's own card can't pin a model or widen what
+ * an agent reads): the Librarian's model, its narrower tools and its reach over every public channel.
+ */
+function withTemplateExtras(team: TeamParams): TeamParams {
+  return {
+    ...team,
+    agents: team.agents.map((a) =>
+      a.name === LIBRARIAN.name && a.handle.replace(/-\d+$/, "") === LIBRARIAN.handle
+        ? { ...a, model: LIBRARIAN.model, scopes: LIBRARIAN.scopes, reads: LIBRARIAN.reads }
+        : a,
+    ),
   };
 }
 
@@ -285,7 +320,7 @@ export async function listTeamTemplates(
       name: serverText(locale, `teamTemplates.${id}.name`),
       sub: serverText(locale, `teamTemplates.${id}.sub`),
       description: serverText(locale, `teamTemplates.${id}.desc`),
-      team: await checkTeam(deps, place, templateInput(id, locale, org, taken, blocked), locale),
+      team: withTemplateExtras(await checkTeam(deps, place, templateInput(id, locale, org, taken, blocked), locale)),
     })),
   );
 }
@@ -311,11 +346,13 @@ export async function useTeamTemplate(
     rightHandDm(deps.db, orgId, userId),
   ]);
   const blocked = isPersonalTemplate(id) ? new Set<string>() : await blockedChannels(deps.db, orgId, userId, locale);
-  const params = await checkTeam(
-    deps,
-    { orgId, channelId: dm.id, personId: userId },
-    templateInput(id, locale, org, taken, blocked),
-    locale,
+  const params = withTemplateExtras(
+    await checkTeam(
+      deps,
+      { orgId, channelId: dm.id, personId: userId },
+      templateInput(id, locale, org, taken, blocked),
+      locale,
+    ),
   );
   const place = { orgId, channelId: dm.id, threadId: null, agentId: lodi.id, runId: null, hop: 0 };
   // The conversation hears of the card once it is made (or failed), so no device shows it open for a moment.
