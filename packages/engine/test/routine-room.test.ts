@@ -133,6 +133,14 @@ test("a DM routine's run reads its creator's DM with the agent", async () => {
   const dm = await openDm(f.db, f.owner.id, f.org.id, { agentId: f.agent.id });
   const room = (await briefs(f))[0]?.channelId ?? "";
   expect(await agentSearchChannels(f.db, f.org.id, f.agent.id, room)).toContain(dm.id);
+  // Wyrd-OS: an agent made to read every public channel (the Librarian) never reads that DM, where its owner writes
+  // what is theirs alone; it still reads its own room.
+  await f.db
+    .update(schema.agents)
+    .set({ setup: { role: null, done: [], reads: "public_channels" } })
+    .where(eq(schema.agents.id, f.agent.id));
+  const reach = await agentSearchChannels(f.db, f.org.id, f.agent.id, room);
+  expect([reach.includes(dm.id), reach.includes(room)]).toEqual([false, true]);
 });
 
 test("a DM routine reports to its creator's DM with the agent", async () => {

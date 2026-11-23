@@ -1436,7 +1436,7 @@ export function replaceSection(body: string, section: string, text: string) {
 }
 
 /** Where a `#`-heading section is: from its line to the next heading of the same or a higher level. */
-function findSection(body: string, section: string) {
+export function findSection(body: string, section: string) {
   const want = section.trim().toLowerCase();
   const lines = body.split("\n");
   let offset = 0;

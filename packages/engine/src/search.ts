@@ -310,7 +310,12 @@ export async function agentSearchChannels(
       }),
   )) as { id: string; visibility: string; kind: string; dmKey: string | null }[];
   const room = rows.find((r) => r.id === currentChannelId && isRoutineRoomKey(r.dmKey));
-  const reports = room?.dmKey && !files ? await routineReportChannel(db, orgId, agentId, room.dmKey) : null;
+  // Wyrd-OS (MODIFICATIONS.md): an agent made to read every public channel (the Librarian) never reads the
+  // conversation its routine reports to: that is its owner's DM, where people write what is theirs alone.
+  const reports =
+    room?.dmKey && !files && !(await readsPublicChannels(db, orgId, agentId))
+      ? await routineReportChannel(db, orgId, agentId, room.dmKey)
+      : null;
   return rows
     .filter(
       (r) =>
@@ -319,6 +324,15 @@ export async function agentSearchChannels(
         (r.visibility === "public" && r.kind === "channel" && !isRoutineRoomKey(r.dmKey)),
     )
     .map((r) => r.id);
+}
+
+/** Wyrd-OS: whether the agent is set to read every public channel (`agents.setup.reads`). */
+async function readsPublicChannels(db: Database, orgId: string, agentId: string) {
+  const [agent] = await db
+    .select({ setup: schema.agents.setup })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.id, agentId)));
+  return agent?.setup?.reads === "public_channels";
 }
 
 /**

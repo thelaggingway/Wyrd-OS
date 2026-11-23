@@ -359,6 +359,52 @@ describe("agents with a restricted page", () => {
     expect((await getWikiPage(f.db, person(f.owner.id), f.org.id, "margens")).body).not.toContain("Mudei");
   });
 
+  test("Wyrd-OS: a section that isn't a heading is an error, and the read tool's frame never lands in the page", async () => {
+    f = await setup({ wikiTools: true });
+    await createWikiPage(wikiDeps(), person(f.owner.id), f.org.id, {
+      title: "Margens",
+      body: "## Regra\n\nMargem mínima de 40%.",
+      tags: ["vendas"],
+    });
+    await createWikiPage(wikiDeps(), person(f.owner.id), f.org.id, { title: "Vendas", body: "Ver [[Margens]]." });
+    const trigger = await insertMessage(f.db, {
+      orgId: f.org.id,
+      channelId: f.general.id,
+      author: { type: "person", userId: f.owner.id },
+      body: "@dev arruma a wiki Margens",
+    });
+    const ctx: ToolContext = {
+      db: f.db,
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      runId: crypto.randomUUID(),
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: trigger.id,
+    };
+    const tools = await createWikiToolSource({ pubsub: f.pubsub, search: f.context }).tools(ctx);
+    const tool = (name: string) => tools.find((x) => x.name === name) as NonNullable<(typeof tools)[number]>;
+    const body = async () => (await getWikiPage(f.db, person(f.owner.id), f.org.id, "margens")).body;
+
+    const wrong = await tool("update_wiki_page").execute(
+      { page: "margens", mode: "replace_section", section: "Margem mínima de 40%.", content: "Margem de 45%." },
+      ctx,
+    );
+    expect([wrong.isError, String(wrong.content).includes("Regra")]).toEqual([true, true]);
+    expect(await body()).toBe("## Regra\n\nMargem mínima de 40%.");
+
+    // The agent saves the whole read back with one change: only the page's own text is kept.
+    const read = String((await tool("read_wiki_page").execute({ page: "margens" }, ctx)).content);
+    expect(read).toContain("Tags: vendas");
+    expect(read).toContain("Linked from: [[Vendas]]");
+    const saved = await tool("update_wiki_page").execute(
+      { page: "margens", mode: "replace", base_version: 1, content: read.replace("40%", "45%") },
+      ctx,
+    );
+    expect(saved.isError).toBeFalsy();
+    expect((await body()).trim()).toBe("## Regra\n\nMargem mínima de 45%.");
+  });
+
   test("a routine reads with its creator's access, and a run with nobody behind it with none", () => {
     const brief = { creatorUserId: "creator" } as RoutineBrief;
     expect(wikiPersonOf({ kind: "person", personId: "ana" })).toBe("ana");

@@ -10,6 +10,7 @@ import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tool
 import {
   appendToWikiPage,
   createWikiPage,
+  findSection,
   getWikiPage,
   recordWikiReads,
   searchWikiForRun,
@@ -35,6 +36,15 @@ const failed = (error: unknown): ToolOutput => ({
 
 /** Wyrd-OS (MODIFICATIONS.md): pages carry their dates, so an agent can tell an old decision from a new one. */
 const day = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+
+/**
+ * Wyrd-OS (MODIFICATIONS.md): what `read_wiki_page` adds around a page (its "# Title (slug …, version …)" line, its
+ * "Tags:" line and its "Linked from:" line), taken off text an agent saves, which otherwise copied them into the page.
+ */
+export const withoutReadFrame = (text: string) =>
+  text
+    .replace(/^\s*# [^\n]*\(slug [^\n,]+, version \d+[^\n]*\)\s*\n+(?:Tags: [^\n]*\n+)?/, "")
+    .replace(/\n+Linked from: (?:\[\[[^\]]+\]\](?:, )?)+\s*$/, "\n");
 
 /** Shown when an agent tries to write with nobody who could have asked. */
 export const WIKI_WRITE_REFUSAL =
@@ -201,7 +211,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
               createWikiPage({ ...wiki(ctx), db }, actor, ctx.orgId, {
                 audience,
                 title: str(input.title),
-                body: str(input.body),
+                body: withoutReadFrame(str(input.body)),
                 folder: str(input.folder) || undefined,
                 tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
                 note: str(input.note) || undefined,
@@ -252,6 +262,18 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
           if (mode === "replace_section" && !str(input.section)) {
             return { content: "replace_section needs `section`.", isError: true };
           }
+          // Wyrd-OS (MODIFICATIONS.md): a section that isn't a heading of the page is an error, never a new section
+          // added at the end (which left the old text and a second copy).
+          if (mode === "replace_section") {
+            const current = await getWikiPage(ctx.db, actor, ctx.orgId, page);
+            if (!findSection(current.body, str(input.section))) {
+              const headings = current.body.match(/^#{1,6}\s+.+$/gm) ?? [];
+              return {
+                content: `No heading "${str(input.section)}" on [[${current.title}]]. ${headings.length ? `Its headings: ${headings.map((h) => h.replace(/^#+\s+/, "")).join(" · ")}.` : "It has no headings."} Use append, or replace with base_version ${current.version}.`,
+                isError: true,
+              };
+            }
+          }
           let before = 0;
           const p = await actWithUndo(
             ctx,
@@ -261,11 +283,11 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
               return mode === "replace"
                 ? updateWikiPage(deps, actor, ctx.orgId, page, {
                     baseVersion: input.base_version as number,
-                    body: str(input.content),
+                    body: withoutReadFrame(str(input.content)),
                     note: str(input.note) || undefined,
                   })
                 : appendToWikiPage(deps, actor, ctx.orgId, page, {
-                    text: str(input.content),
+                    text: withoutReadFrame(str(input.content)),
                     section: str(input.section) || null,
                     mode: mode === "replace_section" ? "replace_section" : "append",
                     note: str(input.note) || undefined,
