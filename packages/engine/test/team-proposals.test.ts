@@ -10,9 +10,11 @@ import {
   createTeam,
   createToolGateway,
   denyTeam,
+  INDIA_TEAM,
   LIBRARIAN,
   listTeamTemplates,
   NEW_AGENT_DEFAULTS,
+  NO_GUESSING,
   OFFER_ANSWERS_TOOL,
   OFFER_INVITES_TOOL,
   openPersonAgentDm,
@@ -557,6 +559,32 @@ describe("team templates", () => {
     expect(members.map((m) => m.channelId)).not.toContain(open.id);
     const reach = await agentSearchChannels(f.db, f.org.id, lib?.id ?? "", "");
     expect([reach.includes(open.id), reach.includes(shut.id)]).toEqual([true, false]);
+  });
+
+  test("Wyrd-OS: the Indian SME template makes five specialists with one routine each, and the Librarian", async () => {
+    f = await setup({ rightHand: true });
+    const used = await useTeamTemplate({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "india", "en");
+    expect(used.state).toBe("created");
+    const made = await f.db.select().from(schema.agents).where(eq(schema.agents.orgId, f.org.id));
+    const byHandle = new Map(made.map((a) => [a.handle, a]));
+    for (const [handle, spec] of Object.entries(INDIA_TEAM)) {
+      const agent = byHandle.get(handle);
+      expect(agent?.name).toBe(spec.name);
+      // The no-guessing block ends every prompt; the agent's own part says it again where its work needs it.
+      expect(agent?.instructions.endsWith(NO_GUESSING)).toBe(true);
+      expect(agent?.instructions).toContain("NOTHING GOES OUT WITHOUT A PERSON");
+      const routines = await f.db
+        .select()
+        .from(schema.routines)
+        .where(eq(schema.routines.agentId, agent?.id ?? ""));
+      expect(routines.map((r) => r.cron)).toEqual([spec.routine.schedule]);
+      const [channel] = await f.db
+        .select()
+        .from(schema.channels)
+        .where(and(eq(schema.channels.orgId, f.org.id), eq(schema.channels.name, spec.channel)));
+      expect(channel).toBeDefined();
+    }
+    expect(byHandle.get("librarian")?.setup?.reads).toBe("public_channels");
   });
 
   test("a personal workspace lists templates for one person's life, each agent in its DM with no channel", async () => {

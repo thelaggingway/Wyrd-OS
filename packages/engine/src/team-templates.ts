@@ -9,6 +9,7 @@ import { addChannelMember, CHANNEL_NAME_PATTERN } from "./channels";
 import type { ContextDeps } from "./context/summaries";
 import { publishMessageCreated } from "./events";
 import { firstName } from "./format";
+import { INDIA_MEMBERS, INDIA_TEAM, INDIA_TEMPLATE } from "./india-team";
 import { LIBRARIAN } from "./librarian";
 import { getMessage, insertMessage, messageView } from "./messages";
 import { requirePermission } from "./organizations";
@@ -31,7 +32,7 @@ import { isPersonalWorkspace } from "./workspace-mode";
  * words in `@agenteschat/i18n` (`teamTemplates.*`, every language). "Create the team" makes it at once, as the right
  * hand's team card in its created state.
  */
-export const BUSINESS_TEMPLATES = ["agency", "store", "clinic", "software", "support", "services"] as const;
+export const BUSINESS_TEMPLATES = ["agency", "store", "clinic", "software", "support", "services", "india"] as const;
 /**
  * A personal workspace's templates (ADR 0159): areas of one person's life, each a few agents that work in their DM with
  * the person, so they make no channel.
@@ -157,7 +158,8 @@ const MEMBERS: Record<Member, { name: string; look: AgentAppearance; cron: strin
   },
 };
 
-const TEAMS: Record<TeamTemplateId, Member[]> = {
+/** Wyrd-OS: "india" is built from `INDIA_TEAM` (`india-team.ts`), its words in English there, not from these. */
+const TEAMS: Record<Exclude<TeamTemplateId, "india">, Member[]> = {
   agency: ["lia", "theo", "iara"],
   store: ["iara", "otto", "lia"],
   clinic: ["nina", "caio", "iara"],
@@ -173,7 +175,7 @@ const TEAMS: Record<TeamTemplateId, Member[]> = {
 };
 
 /** The agents of the business templates: the only ones with a channel each. */
-const CHANNEL_MEMBERS = [...new Set(BUSINESS_TEMPLATES.flatMap((id) => TEAMS[id]))];
+const CHANNEL_MEMBERS = [...new Set(BUSINESS_TEMPLATES.flatMap((id) => (id === "india" ? [] : TEAMS[id])))];
 
 /** A template as the gallery shows it: its words in one language, and the team as its card would propose it. */
 export interface TeamTemplateView {
@@ -196,7 +198,12 @@ const channelName = (locale: AppLocale, m: Member) => {
  * someone else): those get a free name instead, as taken handles do.
  */
 async function blockedChannels(db: Database, orgId: string, userId: string, locale: AppLocale) {
-  const names = [...new Set(CHANNEL_MEMBERS.map((m) => channelName(locale, m)))];
+  const names = [
+    ...new Set([
+      ...CHANNEL_MEMBERS.map((m) => channelName(locale, m)),
+      ...INDIA_MEMBERS.map((m) => INDIA_TEAM[m].channel),
+    ]),
+  ];
   return new Set((await channelPlaces(db, orgId, userId, names)).blocked);
 }
 
@@ -206,6 +213,7 @@ async function blockedChannels(db: Database, orgId: string, userId: string, loca
  * template's agents get no channel: each lives in its DM with the person (ADR 0159).
  */
 function templateInput(id: TeamTemplateId, locale: AppLocale, org: string, taken: Set<string>, blocked: Set<string>) {
+  if (id === "india") return indiaInput(org, taken, blocked);
   const t = (key: string, vars: Record<string, string> = {}) => serverText(locale, key, { org, ...vars });
   const members = TEAMS[id];
   const handleOf = (m: Member) => {
@@ -251,6 +259,41 @@ function templateInput(id: TeamTemplateId, locale: AppLocale, org: string, taken
     // The right hand's weekly check reports on a team's work: one person's agents don't need it (ADR 0159).
     weekly_check: !personal,
     template: id,
+  };
+}
+
+/** A free handle or channel name: `base`, else `base-2`, `base-3`… */
+const freeName = (base: string, used: Set<string>) => {
+  let name = base;
+  for (let n = 2; used.has(name); n++) name = `${base}-${n}`;
+  return name;
+};
+
+/**
+ * Wyrd-OS (MODIFICATIONS.md): the "Indian SME" template, five specialists in their channels with one routine each
+ * (`india-team.ts`), and the Librarian. No skill yet; English only.
+ */
+function indiaInput(org: string, taken: Set<string>, blocked: Set<string>) {
+  return {
+    lead: INDIA_TEMPLATE.lead.replace("{{org}}", org),
+    agents: INDIA_MEMBERS.map((m) => {
+      const a = INDIA_TEAM[m];
+      return {
+        name: a.name,
+        handle: freeName(m, taken),
+        role: a.role,
+        line: a.line,
+        instructions: a.instructions,
+        look: a.look,
+        channel: freeName(a.channel, blocked),
+        routines: [a.routine],
+        first_task: a.firstTask,
+      };
+    }).concat([librarianInput(taken)]),
+    skills: [],
+    approvals: INDIA_TEMPLATE.approvals,
+    weekly_check: true,
+    template: "india",
   };
 }
 
@@ -317,9 +360,9 @@ export async function listTeamTemplates(
   return Promise.all(
     (personal ? PERSONAL_TEMPLATES : BUSINESS_TEMPLATES).map(async (id) => ({
       id,
-      name: serverText(locale, `teamTemplates.${id}.name`),
-      sub: serverText(locale, `teamTemplates.${id}.sub`),
-      description: serverText(locale, `teamTemplates.${id}.desc`),
+      name: id === "india" ? INDIA_TEMPLATE.name : serverText(locale, `teamTemplates.${id}.name`),
+      sub: id === "india" ? INDIA_TEMPLATE.sub : serverText(locale, `teamTemplates.${id}.sub`),
+      description: id === "india" ? INDIA_TEMPLATE.desc : serverText(locale, `teamTemplates.${id}.desc`),
       team: withTemplateExtras(await checkTeam(deps, place, templateInput(id, locale, org, taken, blocked), locale)),
     })),
   );
