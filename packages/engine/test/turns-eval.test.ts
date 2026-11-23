@@ -116,10 +116,11 @@ const size = (r: ModelRequest) =>
  * own computer, `workspaceComputerText` adds 447 to that (48,078); and a sign-in whose link or
  * code goes to a mailbox the agent reads being its own work adds 360; the live files' group (ADR 0196 §6) named with
  * the others, in the prompt and in `find_tools`, adds about 170 (48,834 on the Cloud), and `ignore_usage_limit`, for a person telling the agent to go past
- * its usage pause, adds 356 (49,190); the ceiling leaves a little
+ * its usage pause, adds 356 (49,190); Wyrd-OS (MODIFICATIONS.md): `search_context`'s date window (`after`, `before`,
+ * `sort`, what the Librarian reads a day with) adds about 390 (49,577 on the Cloud); the ceiling leaves a little
  * room above them.
  */
-const OI_CEILING_CHARS = 49_400;
+const OI_CEILING_CHARS = 49_800;
 
 test("a DM 'oi' stays under the size ceiling", async () => {
   const [request] = await play(TURNS.find((t) => t.id === "greet-dm") as ScriptedTurn);
