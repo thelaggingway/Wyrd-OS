@@ -412,7 +412,7 @@ export const envVars = {
     section: "Agents",
   },
   AGENT_MAX_OUTPUT_TOKENS: {
-    schema: z.coerce.number().int().min(256).max(128_000).default(16_000),
+    schema: z.coerce.number().int().min(256).max(128_000).default(128_000),
     description: "Upper bound on tokens an agent may generate in one reply.",
     section: "Agents",
   },
