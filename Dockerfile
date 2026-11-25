@@ -9,9 +9,11 @@ RUN bun install --frozen-lockfile \
  && bun run --filter '@agenteschat/web' build \
  && bun build apps/server/runner/main.ts --target=node --banner '#!/usr/bin/env node' --outfile apps/web/dist/runner/agentes-runner.mjs
 # Wyrd-OS (MODIFICATIONS.md): the server needs only its own production dependencies once the web app and the
-# runner are built; the build tools and the phone and desktop apps' packages stay in this stage (2.2 GB → about
-# 0.7 GB of node_modules), and so does Bun's download cache.
-RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules \
+# runner are built. The phone and desktop apps leave the workspace and the lockfile (`--lockfile-only` drops their
+# packages and pins nothing new), so the build tools, React Native and Expo stay in this stage (2.2 GB → about
+# 0.33 GB of node_modules), and so does Bun's download cache.
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/mobile apps/desktop \
+ && bun install --lockfile-only \
  && bun install --frozen-lockfile --production --filter '@agenteschat/server'
 
 FROM oven/bun:1.4.4
