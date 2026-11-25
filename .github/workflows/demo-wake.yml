@@ -1,7 +1,8 @@
-# Wyrd-OS (MODIFICATIONS.md): wakes the demo server shortly before its routines are due. The demo runs on an
-# InstaBox machine that pauses itself after 30 idle minutes and wakes on a visit to its URL; a paused machine
-# fires no routine. The job opens the URL a few minutes ahead, then keeps visiting it for 40 minutes so a long
-# run isn't paused under it. The URL is the repository secret WYRD_DEMO_URL; without it the job does nothing.
+# Wyrd-OS (MODIFICATIONS.md): resumes the demo server shortly before its routines are due. The demo runs on an
+# InstaBox machine that pauses when idle, and a paused machine fires no routine. Through the InstaBox API (not the
+# app's URL) the job resumes the machine, which works however it was paused, then takes a one-hour activity lease
+# so the machine isn't paused under a long run; the lease ends by itself and the machine pauses once idle again.
+# Secrets: INSTABOX_API_KEY (scope machines:write) and INSTABOX_MACHINE_ID. Without them the job does nothing.
 name: demo-wake
 
 on:
@@ -19,19 +20,29 @@ permissions: {}
 jobs:
   wake:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
-      - name: Wake and keep awake
+      - name: Resume and hold awake for an hour
         env:
-          URL: ${{ secrets.WYRD_DEMO_URL }}
+          KEY: ${{ secrets.INSTABOX_API_KEY }}
+          ID: ${{ secrets.INSTABOX_MACHINE_ID }}
         run: |
-          if [ -z "$URL" ]; then echo "WYRD_DEMO_URL is not set"; exit 0; fi
-          health="${URL%/}/api/health"
-          # A waking machine answers 503 with Retry-After; try for up to 5 minutes.
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 60 "$health" >/dev/null; then echo "awake"; break; fi
-            [ "$i" = 30 ] && { echo "::error::the demo did not wake"; exit 1; }
-            sleep 10
+          if [ -z "$KEY" ] || [ -z "$ID" ]; then echo "INSTABOX_API_KEY or INSTABOX_MACHINE_ID is not set"; exit 0; fi
+          api="https://api.instabox.sh/v1/machines/$ID"
+          # Resume returns an operation; an already running machine answers with one already succeeded.
+          op=$(curl -fsS --max-time 30 -X POST -H "X-API-Key: $KEY" -H "Idempotency-Key: wake-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$api/resume" | jq -r '.id // .operationId // .operation.id')
+          echo "resume operation $op"
+          # Wait for it, at most 5 minutes in all (each long poll is bounded at 25 s).
+          deadline=$(( $(date +%s) + 300 ))
+          state=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            state=$(curl -sS --max-time 30 -H "X-API-Key: $KEY" "https://api.instabox.sh/v1/operations/$op?wait=25s" | jq -r '.state')
+            [ "$state" = succeeded ] && break
+            [ "$state" = failed ] && break
+            sleep 5
           done
-          # Every 10 minutes for 40 minutes: a visit counts as use, so the machine doesn't pause mid-run.
-          for i in 1 2 3 4; do sleep 600; curl -fsS --max-time 60 "$health" >/dev/null && echo "still awake ($i)"; done
+          [ "$state" = succeeded ] || { echo "::error::resume ended $state"; exit 1; }
+          # Pausing for idleness waits while a lease is held; it expires on its own after ttlSeconds.
+          curl -fsS --max-time 30 -X PUT -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+            -d '{"ttlSeconds": 3600}' "$api/activity-leases/routines" >/dev/null
+          echo "awake, held for an hour"
