@@ -662,6 +662,8 @@ export interface Transcript {
   continuation?: ContinuationState;
   /** A routine run's record of the turns before a continue: its ledger and report keep what they found. */
   routineRecord?: string;
+  /** Wyrd-OS (MODIFICATIONS.md): turns cut off at the output limit before any tool call, retried as a nudge. */
+  cutOff?: number;
   /** Tool calls the run made so far, every brain and turn (the controller's progress check reads it). */
   executedCalls?: number;
   /** A computer brain's own tool calls (not ours through the bridge), as the judge reads them (`callLine`): the last 20. */
@@ -5619,6 +5621,21 @@ async function executeRunInner(
         await saveTranscript(db, transcript);
         return stopCanceled("");
       }
+      // Wyrd-OS (MODIFICATIONS.md): a reply cut off at the output limit before any tool call (a model that thought
+      // through all its work at once) is no answer. Its cut-off output leaves the conversation and the model is told
+      // to act in small steps, twice at most; after that the turn ends as any other.
+      if (
+        turnPlan.kind === "model" &&
+        result.stopReason === "max_tokens" &&
+        result.toolCalls.length === 0 &&
+        (transcript.cutOff ?? 0) < MAX_CUT_OFF_RETRIES
+      ) {
+        transcript.cutOff = (transcript.cutOff ?? 0) + 1;
+        if (result.content.length > 0 && transcript.messages.at(-1)?.role === "assistant") transcript.messages.pop();
+        appendUserText(transcript, CUT_OFF_NUDGE);
+        await saveTranscript(db, transcript);
+        continue;
+      }
       const toolUses = result.toolCalls;
       if (result.stopReason === "tool_use" && toolUses.length > 0 && toolScope) {
         const calls: NonNullable<Transcript["pending"]>["calls"] = [];
@@ -7107,6 +7124,11 @@ export function continuedTranscript(stopped: Transcript, line: string): Transcri
   t.continued = { prompt: line };
   return t;
 }
+
+/** Wyrd-OS (MODIFICATIONS.md): how often a run's reply cut off before any tool call is retried, and what it is told. */
+export const MAX_CUT_OFF_RETRIES = 2;
+export const CUT_OFF_NUDGE =
+  "Your last reply hit the output limit before you called any tool, so none of it was kept. Don't plan all the work at once: make your next tool call now, then go on one step at a time (one page or one change per call).";
 
 /** Adds text to the conversation as the person's side (joined to a last user message, never two in a row). */
 export function appendUserText(t: Pick<Transcript, "messages">, text: string) {

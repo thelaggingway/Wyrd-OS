@@ -3,6 +3,7 @@ import type { RealtimeEvent } from "@agenteschat/adapters";
 import { and, asc, eq, schema } from "@agenteschat/db";
 import { ProviderError, systemText } from "@agenteschat/providers";
 import { drainOutbox, listMessages, type OutboxJob, postPersonMessage } from "../src";
+import { CUT_OFF_NUDGE, MAX_CUT_OFF_RETRIES } from "../src/executor";
 import { type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
@@ -236,4 +237,28 @@ test("a model refusal fails the run but still records usage", async () => {
   const [run] = await f.db.select().from(schema.agentRuns);
   expect([run?.status, run?.error]).toEqual(["failed", "model_refused"]);
   expect(await f.db.select().from(schema.usageRecords)).toHaveLength(1);
+});
+
+test("a reply cut off at the output limit before any tool call is retried with a nudge, twice at most", async () => {
+  // Wyrd-OS (MODIFICATIONS.md): a model that thinks through all its work in one reply hits max_tokens and says nothing.
+  f = await setup({
+    reply: (req) =>
+      JSON.stringify(req.messages.at(-1)?.content).includes(CUT_OFF_NUDGE)
+        ? { chunks: ["Saved it."] }
+        : { chunks: ["Let me plan every page fir"], stopReason: "max_tokens" },
+  });
+  await post(f, "@dev update the wiki");
+  await drainOutbox(f.db, f.handlers);
+  expect(f.provider.calls).toHaveLength(2);
+  expect(JSON.stringify(f.provider.calls[1]?.request.messages)).not.toContain("Let me plan every page fir");
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("done");
+  expect((await listMessages(f.db, f.owner.id, f.org.id, f.general.id)).map((m) => m.body)).toContain("Saved it.");
+});
+
+test("a reply cut off every time ends the turn after two retries", async () => {
+  f = await setup({ reply: () => ({ chunks: ["Still planni"], stopReason: "max_tokens" }) });
+  await post(f, "@dev update the wiki");
+  await drainOutbox(f.db, f.handlers);
+  expect(f.provider.calls).toHaveLength(1 + MAX_CUT_OFF_RETRIES);
 });
