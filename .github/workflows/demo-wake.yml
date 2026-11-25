@@ -1,0 +1,37 @@
+# Wyrd-OS (MODIFICATIONS.md): wakes the demo server shortly before its routines are due. The demo runs on an
+# InstaBox machine that pauses itself after 30 idle minutes and wakes on a visit to its URL; a paused machine
+# fires no routine. The job opens the URL a few minutes ahead, then keeps visiting it for 40 minutes so a long
+# run isn't paused under it. The URL is the repository secret WYRD_DEMO_URL; without it the job does nothing.
+name: demo-wake
+
+on:
+  schedule:
+    # In UTC; each is 10 minutes before an IST routine.
+    - cron: "50 17 * * *" # 23:30 IST, the Librarian's nightly
+    - cron: "20 16 * * 0" # Sunday 22:00 IST, the weekly wiki tidy
+    - cron: "20 11 * * *" # 17:00 IST
+    - cron: "20 12 * * *" # 18:00 IST
+    - cron: "20 2 * * 1" # Monday 08:00 IST
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Wake and keep awake
+        env:
+          URL: ${{ secrets.WYRD_DEMO_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "WYRD_DEMO_URL is not set"; exit 0; fi
+          health="${URL%/}/api/health"
+          # A waking machine answers 503 with Retry-After; try for up to 5 minutes.
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 60 "$health" >/dev/null; then echo "awake"; break; fi
+            [ "$i" = 30 ] && { echo "::error::the demo did not wake"; exit 1; }
+            sleep 10
+          done
+          # Every 10 minutes for 40 minutes: a visit counts as use, so the machine doesn't pause mid-run.
+          for i in 1 2 3 4; do sleep 600; curl -fsS --max-time 60 "$health" >/dev/null && echo "still awake ($i)"; done
