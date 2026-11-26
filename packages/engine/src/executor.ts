@@ -59,6 +59,7 @@ import {
   autoWanted,
   chooseAutoModel,
   fallbackChoice,
+  forRoutine,
   inMission,
   needsAutoChoice,
   orgAutoModels,
@@ -1947,7 +1948,10 @@ async function executeRunInner(
   // "Automático": the judge picks the run's model tier and effort while the context is built; the
   // choice is applied once the brain is known, before the first model call. Never blocks: no answer in time
   // is medium/medium.
-  const askAuto = (): Promise<AutoChoice> => {
+  const routineRun = run.background || Boolean(trigger?.meta?.routine);
+  const askAuto = (): Promise<AutoChoice> =>
+    askAutoJudge().then((choice) => (routineRun ? forRoutine(choice) : choice));
+  const askAutoJudge = (): Promise<AutoChoice> => {
     if (!judge) return Promise.resolve(fallbackChoice("none"));
     return Promise.all([recentMessages(), inMission(db, run).catch(() => false)])
       .then(([recent, mission]) =>
@@ -1960,7 +1964,7 @@ async function executeRunInner(
             : { name: agent.name, role: agent.role, instructions: agent.instructions },
           message: trigger?.body ?? topTrigger?.body ?? "",
           recent,
-          routine: run.background || Boolean(trigger?.meta?.routine),
+          routine: routineRun,
           mission,
           computer: brainOf(agent.brain) !== "model",
           tools: granted.length > 0,

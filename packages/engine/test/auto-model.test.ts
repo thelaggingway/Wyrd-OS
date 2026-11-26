@@ -24,6 +24,7 @@ import {
   createAgent,
   createCredential,
   createFakeJudge,
+  createRoutine,
   drainOutbox,
   getAgent,
   isBrainEffortSetting,
@@ -32,6 +33,7 @@ import {
   needsAutoChoice,
   normalizeBrainModel,
   postPersonMessage,
+  runRoutineNow,
   updateAgent,
   updateOrgSettings,
   ValidationError,
@@ -353,6 +355,28 @@ describe("new agents start on Automático", () => {
 describe("a run of an agent on Automático", () => {
   const judgeAnswers = (tier: { current: string }) => (kind: string, id: string) =>
     kind === "auto_model" ? (id === "tier" ? tier.current : "high") : undefined;
+
+  test("a routine's run thinks at low effort whatever the judge chose, and keeps its tier", async () => {
+    // Wyrd-OS (MODIFICATIONS.md): nobody waits on a routine; at high effort a nightly thought for 30k tokens a turn.
+    f = await setup({ judge: judgeAnswers({ current: "large" }) });
+    await updateAgent(f.db, f.owner.id, f.org.id, f.agent.id, { model: AUTO_MODEL });
+    const deps = { db: f.db, pubsub: f.pubsub, context: f.context };
+    const routine = await createRoutine(deps, f.owner.id, f.org.id, {
+      name: "Nightly",
+      agentId: f.agent.id,
+      prompt: "update the wiki",
+      target: { type: "channel", channelId: f.general.id },
+      trigger: { type: "schedule", phrase: "todo dia às 8h" },
+    });
+    await runRoutineNow(deps, f.owner.id, f.org.id, routine.id);
+    await drainOutbox(f.db, f.handlers);
+    const first = f.provider.calls[0]?.request;
+    expect([first?.model, first?.effort]).toEqual(["claude-opus-5-5", "low"]);
+    // A person's message to the same agent still thinks as the judge said.
+    await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, f.general.id, { body: "@dev hi" });
+    await drainOutbox(f.db, f.handlers);
+    expect(f.provider.calls.at(-1)?.request.effort).toBe("high");
+  });
 
   test("asks once, thinks with the chosen model and effort, bills and records it; a resume keeps it", async () => {
     const tier = { current: "large" };

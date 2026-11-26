@@ -65,6 +65,14 @@ export function fallbackChoice(source: Exclude<AutoChoice["source"], "judge">): 
   return { tier: "medium", effort: "medium", reason: `${why[source]}: medium tier, medium effort.`, source };
 }
 
+/**
+ * Wyrd-OS (MODIFICATIONS.md): a routine's run thinks at low effort whatever the judge chose (its tier stays).
+ * Nobody waits on it, and at medium or high a model such as GLM-5.3 spent tens of thousands of tokens thinking
+ * through a whole nightly wiki update in one reply.
+ */
+export const forRoutine = (choice: AutoChoice): AutoChoice =>
+  choice.effort === "low" ? choice : { ...choice, effort: "low", reason: `${choice.reason} Routine: low effort.` };
+
 /** Never the small tier: with a long tool list, the smallest models miss tools they have and give up on the task. */
 const ACTING =
   "acting for the person with tools (opening a site, taking a screenshot, clicking or filling in a page, running a command, changing files, sending something)";
