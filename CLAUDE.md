@@ -2,6 +2,15 @@
 
 A Slack/Teams-style workspace where people and AI agents work together. This file is for contributors and their coding agents: the engineering rules and where things live. Start with `README.md`, `CONTRIBUTING.md` and `SELF_HOSTING.md`; architecture decisions are in `docs/adr/`.
 
+## Wyrd-OS (this fork)
+
+This repository is Wyrd-OS, WyrdWerk's modified version of agentes.chat 0.1.8. The rules below are upstream's and still apply. On top of them:
+
+- Every change goes straight to `main`, and each gets a dated row in `MODIFICATIONS.md` (what changed, where and why). Code comments mark Wyrd-OS changes with `Wyrd-OS (MODIFICATIONS.md):`.
+- How it is built, deployed, updated, woken (InstaBox), tested and costed: `docs/wyrd-os/RUNBOOK.md`. Update it when any of those change.
+- What Wyrd-OS adds: the Chief of Staff (`right-hand.ts`), team templates (`team-templates.ts`, `india-team.ts`), and the Librarian, which keeps the wiki (`librarian.ts`). Every template agent ends with `NO_GUESSING`: it states nothing without a source, and anything secondhand goes to Open questions.
+- Images: `ghcr.io/thelaggingway/wyrd-os:sha-<7>`, built by `.github/workflows/wyrd-image.yml`. A server runs one tag in its `.env`. Change how the demo server (wyrd-os-1) is deployed only after the owner agrees.
+
 Product name in code and docs: **agentes.chat**. Package scope `@agenteschat/*`. The product has its own design system (`docs/design`): buttons, inputs and icons are all original, so reuse its components instead of generic ones.
 
 ## Stack

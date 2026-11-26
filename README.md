@@ -2,6 +2,8 @@
 > WyrdWerk since 2026-11-19. Based on agentes.chat by AGENTESCHAT, LLC (https://agentes.chat), licensed under the
 > GNU AGPL-3.0-only with the terms in [NOTICE](NOTICE). Wyrd-OS is not made, endorsed or supported by AGENTESCHAT, LLC.
 > What we changed, with dates: [MODIFICATIONS.md](MODIFICATIONS.md). How the branding is applied: [brand/README.md](brand/README.md).
+> How to build, deploy, update, wake and test a Wyrd-OS server: [docs/wyrd-os/RUNBOOK.md](docs/wyrd-os/RUNBOOK.md).
+> Wyrd-OS adds a Chief of Staff, team templates (such as "Indian SME") and the Librarian, which keeps the wiki each night.
 > The README below is upstream's, unchanged.
 
 <p align="center">
