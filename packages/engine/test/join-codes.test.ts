@@ -21,6 +21,7 @@ import {
   sendJoinCode,
   sha256,
 } from "../src";
+import { FILE_JOIN_REQUEST_JOB, fileJoinRequest } from "../src/invite-requests";
 import { addMember, type Fixture, SECRET, setup } from "./fixtures";
 
 let f: Fixture | undefined;
@@ -404,7 +405,9 @@ describe("approving a proven request", () => {
     // A server without email: typed and filed by its job, unproven.
     await person("u_eva", "eva@example.com", true);
     await askToJoin(deps(), PUBLIC, { token, user: null, name: "Eva", email: "eva@example.com" }, NOW);
-    await drainOutbox(fx().db, fx().handlers);
+    // Its job files it at the test's clock: on the real one the link, made at NOW, has run out.
+    const [job] = await fx().db.select().from(schema.outbox).where(eq(schema.outbox.kind, FILE_JOIN_REQUEST_JOB));
+    await fileJoinRequest(deps(), job?.payload ?? {}, at(2 * MIN));
 
     const list = await listWaitingJoinRequests(fx().db, fx().owner.id, fx().org.id, NOW);
     expect(list.map((r) => [r.email, r.verified, r.confirmed])).toEqual([
