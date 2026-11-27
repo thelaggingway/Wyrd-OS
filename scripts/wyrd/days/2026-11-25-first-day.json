@@ -1,0 +1,26 @@
+[
+  {
+    "channel": "general",
+    "body": "Decision: from 1 December the office closes at 6:30 pm on Saturdays instead of 2 pm. Yash approved it this morning."
+  },
+  {
+    "channel": "sales",
+    "body": "Meridian Foods asked for a quote for 400 corrugated boxes (30×20×15 cm). Sent quote Q-118 today: ₹18,400 plus GST, valid 15 days."
+  },
+  {
+    "channel": "sales",
+    "body": "Correction: Q-118 should have been ₹19,200 plus GST; the board grade went up. Sent Meridian Foods the revised quote Q-118b this afternoon."
+  },
+  {
+    "channel": "billing",
+    "body": "Harbor Retail paid invoice INV-2207 (₹62,000) today by NEFT. Still open: INV-2211, due 5 December."
+  },
+  {
+    "channel": "schedule",
+    "body": "Delivery to Meridian Foods is booked for Thursday 27 November, morning slot, with Patel Transport."
+  },
+  {
+    "channel": "general",
+    "body": "As discussed, we're moving the packaging supplier to Shree Kraft next quarter."
+  }
+]

@@ -132,8 +132,9 @@ The demo's owner signs in as `owner@wyrdwerk.test`. The password is in the Amp s
    - replaced facts are marked "superseded", not deleted;
    - nothing is stated without a source.
 
-The scripts used for these tests (posting chats, firing a routine, copying the wiki) are not in the repository
-yet.
+The scripts for these steps are in [scripts/wyrd/](../../scripts/wyrd/README.md): `post-day.ts` with the sample
+days in `days/`, `run-routine.ts`, `wiki-dump.ts`, `set-timezone.ts` and `smoke.ts` (a check after a deploy). They
+take the server and account from `WYRD_URL`, `WYRD_EMAIL` and `WYRD_PASSWORD`.
 
 ## Still open
 
