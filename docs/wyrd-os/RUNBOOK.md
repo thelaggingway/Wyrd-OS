@@ -42,6 +42,7 @@ a cloud VM, a sandbox provider or a client's PC. Podman should run the same imag
 |---|---|---|
 | `AGENTES_IMAGE` | `ghcr.io/thelaggingway/wyrd-os:sha-<7>` | The release this server runs. |
 | `AGENT_MAX_OUTPUT_TOKENS` | `128000`, which is now the default | The limit counts thinking as well as the answer. At 16,000, GLM-5.3 used it all on thinking and called no tool. |
+| `FEEDBACK_RELAY` | `false` on wyrd-os-1 | Left on, the feedback form sends what people write to upstream agentes.chat's inbox (`FEEDBACK_URL`). Off, the form is hidden. To get feedback by email instead, set `FEEDBACK_EMAIL` and an email sender (`MILLIONSEND_API_KEY` or `SMTP_URL`, with `EMAIL_FROM`). |
 | `HOST_COMPUTER_PORT` | default `3901` | The agents' computer reaches the app on its own loopback port, so a host that counts web traffic as activity can still pause an idle machine. |
 
 Secret values go only in the server's `.env`. Never commit them.
