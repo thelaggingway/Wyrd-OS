@@ -60,6 +60,12 @@ in the real key on HTTPS requests to that host, in any header.
 - **Store the placeholder as the key.** In the workspace, add the provider with the placeholder as its API key
   (Settings › AI, or `POST /api/app/organizations/{org}/credentials`); the real key never reaches the app or its
   database.
+- **Each machine has its own placeholders.** A machine made from a snapshot gets new `ibsec_…` values, so the
+  keys saved in its workspace (copied from the old machine) fail with `403 secret proxy request failed`. Attach
+  the same secrets to the new machine (`PATCH /v1/machines/{id}/secrets`), then re-save each key with that
+  machine's own placeholder (`POST …/credentials/{id}/rotate`, run on the machine itself). Its public port also
+  has to be opened again (`POST /v1/machines/{id}/ports`), and `PUBLIC_URL` in its `.env` changed to the new
+  address.
 
 wyrd-os-1 has `ZAI_API_KEY`, `DEEPSEEK_API_KEY` and `LAGGINGWAY_API_KEY` attached. The last is WyrdWerk's Bifrost
 gateway, saved in the demo workspace as the custom provider "Laggingway" (`https://api.laggingway.com/v1`,

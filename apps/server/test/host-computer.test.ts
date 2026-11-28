@@ -92,7 +92,7 @@ test("one computer per organization of the first account, its own token each; no
     expect.objectContaining({
       kind: "host",
       name: "Servidor",
-      agents: [expect.objectContaining({ id: agentId }), expect.objectContaining({ handle: "lodi" })],
+      agents: [expect.objectContaining({ id: agentId }), expect.objectContaining({ handle: "chief" })],
     }),
   ]);
   expect(await t.db.select().from(schema.machines).where(eq(schema.machines.orgId, betaId))).toEqual([]);

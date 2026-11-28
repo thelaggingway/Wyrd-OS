@@ -658,14 +658,14 @@ describe("routeMessage", () => {
       (await f.db.select().from(schema.routingDecisions)).find((d) => d.messageId === messageId);
 
     // It fits best: it answers, as any agent the router picks.
-    const fits = fixedStrategy({ lodi: 0.9, dev: 0.3 });
+    const fits = fixedStrategy({ chief: 0.9, dev: 0.3 });
     const setUp = await route(fits.strategy, "how do I add a teammate here?");
     expect(fits.seen[0]?.find((c) => c.agentId === lodi.id)).toMatchObject({ rightHand: true });
     expect(setUp.runs.map((r) => [r.agentId, r.trigger])).toEqual([[lodi.id, "router"]]);
     expect(setUp.seenBy?.sort()).toEqual([lodi.id, f.agent.id].sort());
 
     // The channel's agent fits best: the right hand stays out of what the message shows as read.
-    const work = await route(fixedStrategy({ lodi: 0.3, dev: 0.9 }).strategy, "the build is red again, can you look?");
+    const work = await route(fixedStrategy({ chief: 0.3, dev: 0.9 }).strategy, "the build is red again, can you look?");
     expect(work.selected).toEqual([f.agent.id]);
     expect(work.seenBy).toEqual([f.agent.id]);
     const [run] = work.runs;
