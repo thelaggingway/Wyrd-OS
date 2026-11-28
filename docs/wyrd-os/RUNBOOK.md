@@ -70,9 +70,13 @@ in the real key on HTTPS requests to that host, in any header.
 wyrd-os-1 has `ZAI_API_KEY`, `DEEPSEEK_API_KEY` and `LAGGINGWAY_API_KEY` attached. The last is WyrdWerk's Bifrost
 gateway, saved in the demo workspace as the custom provider "Laggingway" (`https://api.laggingway.com/v1`,
 OpenAI style, not the default): 74 chat models named `Provider/model` (such as `Openkodo/glm-5.3`), with the
-gateway's prices. The app takes at most US$ 10 per million tokens, so the four dearer models (Kimi K3 and
-Gemini 4 Neon) are saved unpriced. The app's tool-call check passed on 71; three opencode-go contributor or free
-models failed it.
+gateway's prices (72 priced; the gateway lists no price for the other two). The app's tool-call check passed on 71;
+three opencode-go contributor or free models failed it.
+
+The app API takes an endpoint's prices in **US dollars per million tokens** (it stores nano-USD per token, 1,000
+times that, and shows dollars again). The gateway's `/v1/models` gives USD per token, so multiply by 1,000,000.
+Until 2026-11-28 the demo's prices were saved 1,000 times too high, so its usage views count about US$ 13.5 that
+was never spent (two routine runs of @theo and @nina on `Coralbricks/deepseek-v4.1-flash`).
 
 ### Two ways to update a server
 
