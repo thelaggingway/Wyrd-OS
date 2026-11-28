@@ -165,7 +165,7 @@ describe("Entrar (e-mail primeiro)", () => {
 
     await type("Senha", "senha-errada");
     await press(/^Entrar/);
-    expect(heading()).toBe("Hmm, essa senha não bateu.");
+    expect(heading()).toBe("Essa senha não bateu.");
     // The field, Entrar and "Esqueci a senha" sit right under it: no line between.
     expect(lead()).toBeNull();
     expect(screen().getByLabelText("Senha").getAttribute("aria-invalid")).toBe("true");
@@ -995,7 +995,7 @@ describe("Aceitar convite", () => {
     expect(screen().getByRole("button", { name: /Continuar com GitHub/ })).toBeTruthy();
     await type("Senha", "senha-errada");
     await press("Entrar na Acme");
-    expect(heading()).toBe("Hmm, essa senha não bateu.");
+    expect(heading()).toBe("Essa senha não bateu.");
     expect(lead()).toBeNull();
     expect(screen().getByLabelText("Senha").getAttribute("aria-invalid")).toBe("true");
     expect(state.calls.some((c) => c.method === "orgs.acceptInvitation")).toBe(false);
@@ -1171,7 +1171,9 @@ describe("Aceitar convite", () => {
     await renderApp("/invite/old", { api: createFakeApi(state) });
     await settle(4);
     await press("Pedir um novo convite");
-    expect(screen().getByRole("alert").textContent).toMatch(/trocado por um convite mais novo ou cancelado/);
+    expect(screen().getByRole("alert").textContent).toMatch(
+      /Alguém pode ter cancelado este link ou mandado um convite mais novo/,
+    );
     expect(screen().queryByRole("button", { name: "Pedido enviado" })).toBeNull();
     expect(screen().getByRole("button", { name: "Pedir um novo convite" }).hasAttribute("disabled")).toBe(false);
   });
@@ -1607,7 +1609,7 @@ describe("Onboarding: the workspace's name", () => {
     expect(document.body.textContent?.split(said)).toHaveLength(2);
     await click(button("Ver planos do agentes.chat"), 6);
     expect(calls(state, "orgs.billingLink")[0]?.args).toEqual(["org-unpaid", "new_workspace"]);
-    expect(left).toEqual(["https://billing.example.com/link?t=new_workspace"]);
+    expect(left).toEqual(["https://billing.example.com/link?t=new_workspace&theme=light"]);
   });
 
   test("back on the question with a workspace that waits for its plan: the refusal opens that workspace", async () => {

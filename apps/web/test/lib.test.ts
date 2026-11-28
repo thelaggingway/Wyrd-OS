@@ -26,6 +26,7 @@ import {
   earlyAccessState,
   INVITATION_MAIL_HEADER,
   INVITATION_TOKEN_HEADER,
+  joinInstead,
   landingFor,
   membershipIn,
   safeRedirect,
@@ -266,7 +267,10 @@ describe("grammar", () => {
     expect(te("noAi.agent", ada)).toBe("Ada won't reply because she has no AI\u00a0connected.");
     expect(te("dm.emptyAgent", ada)).toBe("Ask her to remember, forget or work differently.");
     expect(te("agentPage.work.cell.label", ada)).toBe("How she works");
-    expect(te("agentPage.overview.proposes", ada)).toBe("Ada proposes changing her instructions");
+    expect(te("noAi.signedOut", ada)).toBe("Ada won't reply because her AI is signed\u00a0out.");
+    // No gender in these in English: her context falls back to the one line.
+    expect(te("proposals.leftOutBy", ada)).toBe("Left out by Ada");
+    expect(te("proposals.appliedByAgent", ada)).toBe("Applied by Ada");
     expect(te("chat.work.block", theo)).toBe("What he did");
     expect(te("chat.joined.tip", theo)).toBe("Nobody called Theo. He joined to help.");
     expect(te("channelMembers.removeAgentBody", ada)).toBe(
@@ -393,6 +397,26 @@ describe("guards and permissions", () => {
     expect(settingUp({ ...mine, role: "member" })).toBe(false);
     expect(landingFor({ ...me, organizations: [{ ...mine, role: "member" }] }, null)).toEqual({ orgId: "n" });
     expect(settingUp({ id: "n", name: "N", role: "owner" })).toBe(false);
+  });
+  test("landing: an invitation waiting for someone with no workspace set up opens instead of a first workspace", () => {
+    const invitations = [
+      { orgId: "x", orgName: "X", token: "newest" },
+      { orgId: "y", orgName: "Y", token: "older" },
+    ];
+    const mine = {
+      id: "n",
+      name: "N",
+      role: "owner" as const,
+      onboarding: { step: "agents" as const, generalChannelId: "g" },
+    };
+    expect(landingFor({ ...me, organizations: [], invitations }, null)).toEqual({ invitation: "newest" });
+    // One they started making on the way in: the invitation still comes first.
+    expect(landingFor({ ...me, organizations: [mine], invitations }, "n")).toEqual({ invitation: "newest" });
+    expect(joinInstead({ ...me, organizations: [mine], invitations })).toBe("newest");
+    // A workspace set up opens as ever; the invitation is offered from there.
+    expect(landingFor({ ...me, invitations }, "b")).toEqual({ orgId: "b" });
+    expect(joinInstead({ ...me, invitations })).toBeNull();
+    expect(joinInstead({ ...me, organizations: [] })).toBeNull();
   });
   test("what a membership may do is what the server resolved from its roles", () => {
     const member = { id: "b", name: "B", role: "member" as const, permissions: ["read", "post"] };

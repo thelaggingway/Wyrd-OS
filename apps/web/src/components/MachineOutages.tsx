@@ -1,9 +1,11 @@
 import type { ComputerBrain, MachineOutage, MachineOutages, OutageTarget } from "@agenteschat/client";
 import { useMachineOutages, useMachines, useMoveAgents } from "@agenteschat/client";
 import { managesAgent } from "@agenteschat/client/lib/audience";
+import { maintenanceLine, maintenanceNamed, maintenanceOf } from "@agenteschat/client/lib/computer-maintenance";
 import { awayText } from "@agenteschat/client/lib/computer-queue";
 import { errorText } from "@agenteschat/client/lib/errors";
 import { joinNames, timeAgo } from "@agenteschat/client/lib/format";
+import { planDroppedText } from "@agenteschat/client/lib/machine-outages";
 import { computerKind } from "@agenteschat/client/lib/machines";
 import {
   type BrainUnavailable,
@@ -37,6 +39,7 @@ import type { TFunction } from "i18next";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { useConnectAi } from "@/components/ConnectAi";
 import { useOrg } from "@/components/org-context";
 import { ReportProblem } from "@/components/ReportProblem";
 import { RequestDone, RequestOpen } from "@/components/RequestCard";
@@ -115,8 +118,9 @@ function OutageNotice({
     o.agents.map((a) => a.name),
     t,
   );
+  const away = maintenanceOf(o);
   const sub = [
-    cloud ? t("outage.cloudSub") : null,
+    cloud && !away ? t("outage.cloudSub") : null,
     t("outage.waitFor", { count: o.agents.length, names }),
     o.waitingRuns > 0 ? t("outage.stopped", { count: o.waitingRuns }) : null,
   ]
@@ -129,9 +133,11 @@ function OutageNotice({
         <b>
           {here
             ? t("machines.thisMac.outageTitle", { ago: timeAgo(t, o.offlineSince, now) })
-            : cloud
-              ? t("outage.titleCloud", { name: o.name, ago: timeAgo(t, o.offlineSince, now) })
-              : t("outage.title", { name: o.name, ago: timeAgo(t, o.offlineSince, now) })}
+            : away
+              ? maintenanceLine(t, away)
+              : cloud
+                ? t("outage.titleCloud", { name: o.name, ago: timeAgo(t, o.offlineSince, now) })
+                : t("outage.title", { name: o.name, ago: timeAgo(t, o.offlineSince, now) })}
         </b>
         <span>{sub}</span>
       </span>
@@ -216,6 +222,7 @@ export function SwitchComputerDialog({
   const { t } = useTranslation();
   const { org } = useOrg();
   const toast = useToast();
+  const connect = useConnectAi();
   const move = useMoveAgents(org.id);
   const id = useId();
   const [picked, setPicked] = useState<string[]>(() => o.agents.map((a) => a.agentId));
@@ -255,7 +262,9 @@ export function SwitchComputerDialog({
                   target: targetName,
                 })
               : t("outage.done.none");
+          const plans = planDroppedText(t, r, { from: o.name, to: targetName, nameOf });
           const detail = [
+            ...plans.lines,
             r.resumed > 0 ? t("outage.done.resumed", { count: r.resumed }) : null,
             r.stillWaiting > 0 ? t("outage.done.stillWaiting", { count: r.stillWaiting, name: o.name }) : null,
             ...r.skipped.map((s) =>
@@ -267,7 +276,12 @@ export function SwitchComputerDialog({
           ]
             .filter(Boolean)
             .join(" · ");
-          toast.show(text, r.moved.length > 0 ? "info" : "error", undefined, detail || undefined);
+          const signIn = plans.signIn;
+          const action =
+            signIn && connect
+              ? { label: t("outage.done.signIn", { name: targetName }), run: () => connect.open(signIn) }
+              : undefined;
+          toast.show(text, r.moved.length > 0 ? "info" : "error", action, detail || undefined);
           onOpenChange(false);
         },
         onError: (e) => toast.show(errorText(t, e), "error"),
@@ -349,7 +363,7 @@ export function WaitingCard({ notice, agentId }: { notice: BrainUnavailable; age
   const agent = useDirectory(org.id).agentById.get(who ?? "");
   const switches = selfHost && managesAgent(agent);
   const [open, setOpen] = useState(false);
-  const { outages, outage, mine, state, name } = useWaitState(notice, agentId);
+  const { outages, outage, mine, state, name, away } = useWaitState(notice, agentId);
   const waiting = mine ? waitingText(t, mine.waiting) : null;
   if (state !== "waiting") {
     const text = state === "back" ? t("outage.card.back", { name }) : t("outage.card.moved");
@@ -359,7 +373,7 @@ export function WaitingCard({ notice, agentId }: { notice: BrainUnavailable; age
       </RequestDone>
     );
   }
-  const title = t("outage.card.waiting", { name });
+  const title = away ? maintenanceNamed(t, away, name) : t("outage.card.waiting", { name });
   return (
     <>
       <RequestOpen
@@ -416,7 +430,11 @@ function useWaitState(notice: BrainUnavailable, agentId: string | null) {
   const seen = useRef<string | null>(null);
   if (outage) seen.current = outage.name;
   const name = outage?.name ?? machine?.name ?? seen.current ?? t("outage.someComputer");
-  return { outages, outage, mine, state, name };
+  // Away for what we do to it (a move, a restart…): the outages say it to who manages the agent, the computers list
+  // to anyone.
+  const fromList = machine && !machine.online ? maintenanceOf(machine) : null;
+  const away = maintenanceOf(outage) ?? (fromList?.away ? fromList : null);
+  return { outages, outage, mine, state, name, away };
 }
 
 /** "Away 3 min" on the waiting note's author line, beside its time, while its computer is still gone. */

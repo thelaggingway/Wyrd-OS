@@ -23,6 +23,7 @@ import {
   rightHandPin,
 } from "../../src/features/chats/logic";
 import { SETTINGS_SECTIONS } from "../../src/features/settings/logic";
+import { chatScreenSource } from "./chat-screen-source";
 import { agent, at } from "./fixtures";
 
 const lodi = agent({ id: "a-lodi", name: "Lodi", builtin: "right_hand" });
@@ -47,10 +48,8 @@ test("the right hand is its own row, its DM's unread kept, never a row of Recent
 test("Conversas asks the right hand from its own field under the greeting, never one of Agentes' rows", () => {
   const src = (f: string) => readFileSync(new URL(`../../src/features/${f}`, import.meta.url), "utf8");
   const chats = src("chats/ChatsScreen.tsx");
-  // Its face wakes as Conversas arrives after the splash (once per launch).
-  expect(chats).toContain(
-    "<RightHandAsk row={pinned.pin} onStart={startDm} faceMode={wake.mode} faceStyle={wake.style} />",
-  );
+  // Its face wakes as Conversas arrives after the splash (once per launch), where it is: no hop.
+  expect(chats).toContain("<RightHandAsk row={pinned.pin} onStart={startDm} faceMode={wake.mode} />");
   expect(chats).toContain("after={ask}");
   expect(chats).not.toContain("kept: lead");
   expect(src("right-hand/Pin.tsx")).toContain('t("mobile.chat.messageTo", { name: row.with.name })');
@@ -237,7 +236,8 @@ test("its Computador row is always there: it opens the viewer's own place, or sa
   expect(screen).toContain("const none = rightHandNoComputer(view.desktopQ.data?.reason, selfHosted(auth.data));");
   // With none there is nothing to open: no chevron, no press, and the reason under the row.
   expect(screen).toContain('<GroupedRow icon="laptop" label={t("agentComputer.button")} />');
-  expect(screen).toContain('t(none ?? "rightHand.computerYours")');
+  // Its place's line says whether the computer keeps it apart (`rightHandComputerLine`, from the computer's mode).
+  expect(screen).toContain("t(none ?? rightHandComputerLine(view.machine))");
   // On a self-hosted server with none, the line links to making this server the agents' computer.
   expect(screen).toContain('none === "rightHand.computerNoHomeServer" ? (');
   // No computer of the workspace's own: whoever may add one opens Dispositivos from the row.
@@ -256,7 +256,7 @@ test("its DM, cards and profile treat it apart through the one shared helper", (
   const src = (f: string) => readFileSync(new URL(`../../src/features/${f}`, import.meta.url), "utf8");
   // Its computer in its DM as any agent's, and its own line; its field says "Mensagem para …" on one line, as every
   // DM's.
-  const chat = src("chat/ChatScreen.tsx");
+  const chat = chatScreenSource();
   expect(chat).toContain("isRightHand(dmAgent)");
   expect(chat).not.toContain('t("rightHand.composerHint")');
   expect(chat).toContain("const dmComputer = dmAgentId && !isThread ? { agentId: dmAgentId, onOpen: leavePlace }");
@@ -290,7 +290,7 @@ test("it waves on the person's first visit only: its DM never read by them, on a
   expect(firstVisitOf([dm(lodi, 1)], lodi.id)).toBe(false);
   // Decided by the conversation, so the greeting moving into the list with the first message keeps it, not playing
   // again; under the greeting, decorative, playing once.
-  const chat = readFileSync(new URL("../../src/features/chat/ChatScreen.tsx", import.meta.url), "utf8");
+  const chat = chatScreenSource();
   expect(chat).toContain('useRightHandWave(orgId, rightHand && dmAgent ? dmAgent.id : "")');
   expect(
     chat.match(/<RightHandIntro agent=\{dmAgent\} channelId=\{channelId\} waveFrom=\{waveFrom\} \/>/g),

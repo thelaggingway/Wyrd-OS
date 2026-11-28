@@ -1,8 +1,10 @@
-import { type Database, rowsOf, type SQL, sql } from "@agenteschat/db";
+import { BRAIN_COLD_CAUSES, BRAIN_TURN_MEASURES } from "@agenteschat/adapters";
+import { type Database, rowsOf, type SQL, type schema, sql } from "@agenteschat/db";
+import { UUID } from "./authority";
 import { BRAIN_KINDS } from "./brain-settings";
 import { ValidationError } from "./errors";
 import { isJsonObject, numberIn, wholeOrNull } from "./format";
-import { instantOf } from "./operator-paging";
+import { heavyRead, instantOf } from "./operator-paging";
 
 /**
  * Where runs' time went, for the operator API: one run's kept claims (`runClaims`, in its trace) and the stages,
@@ -27,10 +29,155 @@ const QUERIES_MAX = 1_000_000_000;
 // A stage as the profiler names it: a word, then the turn it is of. Both sides read it, so one pattern for both.
 const STAGE = /^[a-z][a-z0-9_]{0,39}(#[0-9]{1,5})?$/;
 // `CODE` of `operator-paging.ts` spelled out for Postgres, whose `\w` also takes letters beyond ASCII.
-const MODEL_SQL = "^[A-Za-z][A-Za-z0-9_.:/-]{0,99}$";
+export const MODEL_SQL = "^[A-Za-z][A-Za-z0-9_.:/-]{0,99}$";
 const CAUSE_SQL = "^[a-z_:]{1,60}$";
 
 const msOf = (v: unknown) => wholeOrNull(numberIn(v, 0, TIMING_MAX_MS));
+/** A computer turn's measures as its runner gave them (`BrainTurnTimings`), null where it gave none. */
+const turnMeasures = (t: Record<string, unknown>) =>
+  Object.fromEntries(BRAIN_TURN_MEASURES.map((k) => [k, msOf(t[k])])) as Record<
+    (typeof BRAIN_TURN_MEASURES)[number],
+    number | null
+  >;
+
+/** Why a cold turn started a process, as its runner said (`BRAIN_COLD_CAUSES`); null when warm or not said. */
+const coldOf = (t: Record<string, unknown>) =>
+  t.warm === false && (BRAIN_COLD_CAUSES as readonly unknown[]).includes(t.cold) ? (t.cold as string) : null;
+const COLD_SQL = `^(${BRAIN_COLD_CAUSES.join("|")})$`;
+
+interface ClaimStage {
+  stage: string;
+  ms: number;
+  queries: number;
+  parts?: ClaimStage[];
+}
+/** A stage as stored, or none when its time is no measure; its steps (`parts`) the same way, one level deep. */
+function stageOf(s: unknown, deep: boolean): ClaimStage[] {
+  if (!isJsonObject(s)) return [];
+  const ms = msOf(s.ms);
+  if (ms === null) return [];
+  const stage = typeof s.stage === "string" && STAGE.test(s.stage) ? s.stage : "other";
+  const parts = deep && Array.isArray(s.parts) ? s.parts.flatMap((p) => stageOf(p, false)) : [];
+  return [
+    {
+      stage,
+      ms,
+      queries: wholeOrNull(numberIn(s.queries, 0, QUERIES_MAX)) ?? 0,
+      ...(parts.length > 0 ? { parts: parts.slice(0, RUN_CLAIM_STAGES_MAX) } : {}),
+    },
+  ];
+}
+
+const WORD = /^[a-z][a-z0-9_]{0,63}$/;
+/** A cause as `slowMarks` writes it: a word, or a step and what it waited on (`tools_granted.connectors`). */
+const CAUSE = /^[a-z][a-z0-9_.-]{0,63}$/;
+const HASH = /^[0-9a-f]{8}$/;
+const SLOW_STAGES = ["context", "pre_turn", "init", "first_byte", "reply"] as const;
+/** The most evidence lines a turn gives, and their longest (`BRAIN_LIMITS`, as the runner sends them). */
+const EVIDENCE_LINES = 60;
+const EVIDENCE_LINE = 300;
+
+/** A turn's trace as stored (`TurnTrace`), each field checked; null when it isn't one. */
+function turnOf(t: unknown) {
+  if (!isJsonObject(t)) return null;
+  const at = msOf(t.at);
+  const ms = msOf(t.ms);
+  if (at === null || ms === null) return null;
+  const r = isJsonObject(t.runner) && typeof t.runner.warm === "boolean" ? t.runner : null;
+  const tools = isJsonObject(t.tools) ? t.tools : null;
+  const system: Record<string, string> = {};
+  for (const [k, v] of Object.entries(isJsonObject(t.system) ? t.system : {}))
+    if (WORD.test(k) && typeof v === "string" && HASH.test(v)) system[k] = v;
+  return {
+    brain: (BRAIN_KINDS as readonly unknown[]).includes(t.brain) ? (t.brain as string) : "other",
+    model: typeof t.model === "string" && new RegExp(MODEL_SQL).test(t.model) ? t.model : null,
+    atMs: at,
+    ms,
+    end: typeof t.end === "string" && WORD.test(t.end) ? t.end : "other",
+    preTurnMs: msOf(t.preTurnMs),
+    firstEventMs: msOf(t.firstEventMs),
+    firstTextMs: msOf(t.firstTextMs),
+    tools: tools ? { count: msOf(tools.count) ?? 0, ms: msOf(tools.ms) ?? 0, maxMs: msOf(tools.maxMs) ?? 0 } : null,
+    runner: r ? { warm: r.warm as boolean, cold: coldOf(r), ...turnMeasures(r) } : null,
+    evidence: (r && Array.isArray(r.evidence) ? r.evidence : [])
+      .filter((l: unknown): l is string => typeof l === "string")
+      .slice(0, EVIDENCE_LINES)
+      .map((l: string) => l.slice(0, EVIDENCE_LINE)),
+    system,
+  };
+}
+
+/** A budget a claim broke as stored (`SlowMark`); null when it isn't one. */
+function slowOf(m: unknown) {
+  if (!isJsonObject(m) || !(SLOW_STAGES as readonly unknown[]).includes(m.stage)) return null;
+  const ms = msOf(m.ms);
+  if (ms === null) return null;
+  return {
+    stage: m.stage as (typeof SLOW_STAGES)[number],
+    ms,
+    budgetMs: msOf(m.budgetMs) ?? 0,
+    cause: typeof m.cause === "string" && CAUSE.test(m.cause) ? m.cause : "other",
+    turn: wholeOrNull(numberIn(m.turn, 1, RUN_CLAIM_TURNS_MAX)),
+  };
+}
+
+type ClaimTurn = NonNullable<ReturnType<typeof turnOf>>;
+
+/**
+ * A claim as one waterfall, from its start: each stage after the one before it (its steps inside it), and each turn's
+ * marks where its trace put them (`turn#1.pre_turn`, `turn#1.init`, `turn#1.first_token`, `turn#1.first_text`); a mark
+ * is a span of 0 ms. A runner's measures count from when its computer began the turn, taken here to be the end of the
+ * work before it.
+ */
+export function claimWaterfall(stages: readonly ClaimStage[], turns: readonly ClaimTurn[]) {
+  const spans: { span: string; startMs: number; ms: number }[] = [];
+  let at = 0;
+  for (const s of stages) {
+    spans.push({ span: s.stage, startMs: at, ms: s.ms });
+    let inside = at;
+    for (const p of s.parts ?? []) {
+      spans.push({ span: `${s.stage}.${p.stage}`, startMs: inside, ms: p.ms });
+      inside += p.ms;
+    }
+    at += s.ms;
+  }
+  // A turn's `at` counts from its claim's own start (`claim`), after what was timed before it (the router, a wait for
+  // room), which the stages list first.
+  const claimAt = stages.findIndex((s) => s.stage === "claim");
+  const origin = stages.slice(0, Math.max(0, claimAt)).reduce((n, s) => n + s.ms, 0);
+  turns.forEach((t, i) => {
+    const name = `turn#${i + 1}`;
+    const pre = t.preTurnMs ?? 0;
+    const at = origin + t.atMs;
+    spans.push({ span: name, startMs: at, ms: t.ms });
+    if (pre > 0) spans.push({ span: `${name}.pre_turn`, startMs: at, ms: pre });
+    const ready = at + pre;
+    if (t.runner?.initMs != null) spans.push({ span: `${name}.init`, startMs: ready, ms: t.runner.initMs });
+    // `firstRequestMs` where the runner's measures have it.
+    const measured = t.runner as Partial<Record<string, number | null>> | null;
+    for (const [mark, ms] of [
+      ["sent", measured?.sentMs],
+      ["first_request", measured?.firstRequestMs],
+      ["first_token", measured?.firstTokenMs],
+    ] as const) {
+      if (ms != null) spans.push({ span: `${name}.${mark}`, startMs: ready + ms, ms: 0 });
+    }
+    if (t.firstEventMs != null) spans.push({ span: `${name}.first_event`, startMs: at + t.firstEventMs, ms: 0 });
+    if (t.firstTextMs != null) spans.push({ span: `${name}.first_text`, startMs: at + t.firstTextMs, ms: 0 });
+    if (t.tools) spans.push({ span: `${name}.own_tools`, startMs: ready, ms: t.tools.ms });
+  });
+  return spans.sort((a, b) => a.startMs - b.startMs).slice(0, RUN_CLAIM_STAGES_MAX);
+}
+
+/** The computer a run's latest claim with a computer turn thought on (`profiles` as stored, which may hold anything). */
+export function lastRunComputer(profiles: unknown): string | undefined {
+  if (!Array.isArray(profiles)) return undefined;
+  for (const claim of [...profiles].reverse()) {
+    if (isJsonObject(claim) && typeof claim.machineId === "string" && UUID.test(claim.machineId))
+      return claim.machineId;
+  }
+  return undefined;
+}
 
 /** A run's kept claims as its trace gives them, oldest first: `profiles` as stored, which may hold anything. */
 export function runClaims(profiles: unknown) {
@@ -39,15 +186,12 @@ export function runClaims(profiles: unknown) {
     .filter(isJsonObject)
     .slice(-RUN_CLAIMS_MAX)
     .map((claim) => {
-      const stages = (Array.isArray(claim.stages) ? claim.stages : []).flatMap((s: unknown) => {
-        if (!isJsonObject(s)) return [];
-        const ms = msOf(s.ms);
-        if (ms === null) return [];
-        const stage = typeof s.stage === "string" && STAGE.test(s.stage) ? s.stage : "other";
-        return [{ stage, ms, queries: wholeOrNull(numberIn(s.queries, 0, QUERIES_MAX)) ?? 0 }];
-      });
+      const stages = (Array.isArray(claim.stages) ? claim.stages : []).flatMap((s: unknown) => stageOf(s, true));
       const total = isJsonObject(claim.total) ? claim.total : {};
       const sum = (field: "ms" | "queries") => stages.reduce((n, s) => n + s[field], 0);
+      const turns = (Array.isArray(claim.turns) ? claim.turns : [])
+        .flatMap((t: unknown) => turnOf(t) ?? [])
+        .slice(0, RUN_CLAIM_TURNS_MAX);
       return {
         endedAt: instantOf(claim.endedAt),
         totalMs: msOf(total.ms) ?? sum("ms"),
@@ -57,12 +201,102 @@ export function runClaims(profiles: unknown) {
         computerTurns: (Array.isArray(claim.brain) ? claim.brain : [])
           .flatMap((t: unknown) =>
             isJsonObject(t) && typeof t.warm === "boolean"
-              ? [{ warm: t.warm, initMs: msOf(t.initMs), firstEventMs: msOf(t.firstEventMs) }]
+              ? [{ warm: t.warm, cold: coldOf(t), ...turnMeasures(t) }]
               : [],
           )
           .slice(0, RUN_CLAIM_TURNS_MAX),
+        turns,
+        slow: (Array.isArray(claim.slow) ? claim.slow : []).flatMap((m: unknown) => slowOf(m) ?? []).slice(0, 50),
+        waterfall: claimWaterfall(stages, turns),
       };
     });
+}
+
+/**
+ * Where a reply's time went, in the groups the operator's breakdown charts (one color each, so eight at most), in the
+ * order a turn reaches them: waits for a computer, the claim and its context (the router's pick before it), the
+ * agent's checkouts updated before its turn, a new CLI process until ready, ready to the model's first byte, the model
+ * writing, tools, then the turn's checks and saving.
+ */
+export const STAGE_GROUPS = [
+  "waits",
+  "context",
+  "pre_turn_sync",
+  "cli_init",
+  "cli_first_byte",
+  "model_write",
+  "tools",
+  "finish",
+] as const;
+export type StageGroup = (typeof STAGE_GROUPS)[number];
+
+/** The group of a stage as the profiler names it, without its turn, or of a step of a computer turn's `model`. */
+export function stageGroupOf(stage: string): StageGroup {
+  switch (stage) {
+    case "room_wait":
+    case "waits":
+      return "waits";
+    case "router":
+    case "claim":
+    case "context":
+      return "context";
+    case "pre_turn_sync":
+    case "cli_init":
+    case "cli_first_byte":
+    case "model_write":
+    case "tools":
+      return stage;
+    // An API model's turn, or a computer's from before its steps were kept.
+    case "model":
+      return "model_write";
+    default:
+      return "finish";
+  }
+}
+
+/** The most segments a run's waterfall gives. */
+export const RUN_WATERFALL_MAX = 500;
+
+/**
+ * A run's claims as one timeline, the breakdown's table drawn in time: each stage (a computer turn's `model` in its
+ * steps, which are its shares, drawn one after the other) from the first claim's start. A claim starts where its end
+ * and its time put it, or, kept without its end, right after the one before; the gap between two claims is in neither.
+ */
+export function runWaterfall(claims: ReturnType<typeof runClaims>) {
+  const first = claims.find((c) => c.endedAt);
+  const base = first?.endedAt ? Date.parse(first.endedAt) - first.totalMs : 0;
+  const segments: {
+    claim: number;
+    stage: string;
+    turn: number | null;
+    part: string | null;
+    group: StageGroup;
+    startMs: number;
+    ms: number;
+  }[] = [];
+  let at = 0;
+  claims.forEach((claim, i) => {
+    at = claim.endedAt && first?.endedAt ? Math.max(at, Date.parse(claim.endedAt) - claim.totalMs - base) : at;
+    for (const s of claim.stages) {
+      const cut = s.stage.search(/#\d+$/);
+      const stage = cut < 0 ? s.stage : s.stage.slice(0, cut);
+      const turn = cut < 0 ? null : Number(s.stage.slice(cut + 1));
+      const steps = stage === "model" && s.parts ? s.parts : [{ stage: null, ms: s.ms }];
+      for (const p of steps) {
+        segments.push({
+          claim: i,
+          stage,
+          turn,
+          part: p.stage,
+          group: stageGroupOf(p.stage ?? stage),
+          startMs: Math.round(at),
+          ms: Math.round(p.ms),
+        });
+        at += p.ms;
+      }
+    }
+  });
+  return { segments: segments.slice(0, RUN_WATERFALL_MAX), cut: segments.length > RUN_WATERFALL_MAX };
 }
 
 export interface RunTimingsQuery {
@@ -77,10 +311,13 @@ export interface RunTimingsQuery {
 
 // Postgres promises no order between the two sides of an `and`, so each cast sits inside the `case` that checked it.
 // Through numeric, which holds any number JSON can: a float8 would refuse the largest.
-const msSql = (value: string) =>
+export const msSql = (value: string) =>
   `case when jsonb_typeof(${value}) = 'number' then case when (${value})::numeric between 0 and ${TIMING_MAX_MS}
       then (${value})::numeric::float8 end end`;
-const listSql = (value: string) => `case when jsonb_typeof(${value}) = 'array' then ${value} else '[]'::jsonb end`;
+export const stageSql = (value: string) =>
+  `case when ${value}->>'stage' ~ '${STAGE.source}' then regexp_replace(${value}->>'stage', '#[0-9]+$', '') else 'other' end`;
+export const listSql = (value: string) =>
+  `case when jsonb_typeof(${value}) = 'array' then ${value} else '[]'::jsonb end`;
 const pct = (q: number, column: string, filter = "") =>
   `percentile_cont(${q}) within group (order by ${column})${filter ? ` filter (where ${filter})` : ""}`;
 
@@ -120,14 +357,7 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
       : "null::text",
   );
   const kept = String(RUN_TIMINGS_ROWS_MAX);
-
-  // Fleet-wide these read many rows: compiling them costs more than it saves, and one that still runs long is stopped.
-  const read = (statement: SQL) =>
-    db.transaction(async (tx) => {
-      await tx.execute(sql`set local jit = off`);
-      await tx.execute(sql`set local statement_timeout = '20s'`);
-      return tx.execute(statement);
-    });
+  const read = (statement: SQL) => heavyRead(db, statement);
   const [profileRows, waitRows] = await Promise.all([
     // Each run's claims, read once for the counts, the stages and the starts.
     read(sql`
@@ -141,19 +371,28 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
         ) r
         left join lateral jsonb_array_elements(${sql.raw(listSql("r.profiles"))}) e
           on jsonb_typeof(e.value) = 'object'
-      ), st as (
-        select c.brain, c.model,
-          case when s.value->>'stage' ~ '${sql.raw(STAGE.source)}'
-            then regexp_replace(s.value->>'stage', '#[0-9]+$', '') else 'other' end as stage,
-          ${sql.raw(msSql("s.value->'ms'"))} as ms
+      ), cs as (
+        select c.brain, c.model, s.value as s
         from c, jsonb_array_elements(${sql.raw(listSql("c.claim->'stages'"))}) s
+      ), st as (
+        select cs.brain, cs.model, ${sql.raw(stageSql("cs.s"))} as stage, ${sql.raw(msSql("cs.s->'ms'"))} as ms
+        from cs
+        union all
+        -- A stage's steps, each named after it: context.build.
+        select cs.brain, cs.model, ${sql.raw(stageSql("cs.s"))} || '.' || ${sql.raw(stageSql("p.value"))},
+          ${sql.raw(msSql("p.value->'ms'"))}
+        from cs, jsonb_array_elements(${sql.raw(listSql("cs.s->'parts'"))}) p
       ), sg as (
         select brain, model, stage, count(*)::int as count, ${sql.raw(pct(0.5, "ms"))} as "medianMs",
           ${sql.raw(pct(0.9, "ms"))} as "p90Ms", ${sql.raw(pct(0.99, "ms"))} as "p99Ms", max(ms) as "maxMs"
         from st where ms is not null group by brain, model, stage
       ), b as (
-        select c.brain, c.model, t.value->'warm' = 'true'::jsonb as warm,
-          ${sql.raw(msSql("t.value->'initMs'"))} as init, ${sql.raw(msSql("t.value->'firstEventMs'"))} as first
+        select c.brain, c.model, t.value->'warm' = 'true'::jsonb as warm, t.value->>'cold' as cold,
+          ${sql.raw(msSql("t.value->'initMs'"))} as init, ${sql.raw(msSql("t.value->'firstEventMs'"))} as first,
+          ${sql.raw(msSql("t.value->'firstTokenMs'"))} as token, ${sql.raw(msSql("t.value->'firstAssistantMs'"))} as said,
+          ${sql.raw(msSql("t.value->'firstRequestMs'"))} as request,
+          ${sql.raw(msSql("t.value->'retries'"))} as retries, ${sql.raw(msSql("t.value->'retryDelayMs'"))} as delay,
+          ${sql.raw(msSql("t.value->'thinkingChars'"))} as thought
         from c, jsonb_array_elements(${sql.raw(listSql("c.claim->'brain'"))}) t
         where jsonb_typeof(t.value->'warm') = 'boolean'
       )
@@ -172,9 +411,24 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
             ${sql.raw(pct(0.99, "first", "warm"))} as "warmFirstEventP99Ms",
             ${sql.raw(pct(0.5, "first", "not warm"))} as "coldFirstEventMedianMs",
             ${sql.raw(pct(0.9, "first", "not warm"))} as "coldFirstEventP90Ms",
-            ${sql.raw(pct(0.99, "first", "not warm"))} as "coldFirstEventP99Ms"
+            ${sql.raw(pct(0.99, "first", "not warm"))} as "coldFirstEventP99Ms",
+            ${sql.raw(pct(0.5, "token"))} as "firstTokenMedianMs", ${sql.raw(pct(0.9, "token"))} as "firstTokenP90Ms",
+            ${sql.raw(pct(0.5, "request"))} as "firstRequestMedianMs",
+            ${sql.raw(pct(0.9, "request"))} as "firstRequestP90Ms",
+            ${sql.raw(pct(0.5, "token - request", "token >= request"))} as "apiWaitMedianMs",
+            ${sql.raw(pct(0.9, "token - request", "token >= request"))} as "apiWaitP90Ms",
+            ${sql.raw(pct(0.5, "said"))} as "firstAssistantMedianMs",
+            ${sql.raw(pct(0.9, "said"))} as "firstAssistantP90Ms",
+            count(*) filter (where retries > 0)::int as "retriedTurns", sum(retries) as retries,
+            sum(delay) as "retryDelayMs", ${sql.raw(pct(0.5, "thought"))} as "thinkingCharsMedian",
+            ${sql.raw(pct(0.9, "thought"))} as "thinkingCharsP90"
           from b group by brain, model order by turns desc, brain, model limit ${sql.raw(kept)}
-        ) g) as starts`),
+        ) g) as starts,
+        (select coalesce(jsonb_agg(to_jsonb(g)), '[]'::jsonb) from (
+          select brain, model, case when cold ~ '${sql.raw(COLD_SQL)}' then cold else 'unsaid' end as cause,
+            count(*)::int as turns
+          from b where not warm group by 1, 2, 3 order by turns desc, 1, 2, 3 limit ${sql.raw(kept)}
+        ) g) as "coldStarts"`),
     // A wait is a step written once: it lasts until the run's next step, its end, or the earlier of now and `to`.
     // Materialized, or each of the four measures of `sec` below would look the next step up again. The step's
     // condition is the one of `agent_run_steps`'s partial index on `run_id`, word for word: the planner reads the
@@ -182,7 +436,7 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
     read(sql`
       with w as materialized (
         select ar.id, ${brain} as brain, ${model} as model,
-          'brain_unavailable:' || coalesce(s.data->>'code', 'other') as said,
+          'brain_unavailable:' || coalesce(s.data->>'code', 'other') || coalesce(':' || (s.data->>'room'), '') as said,
           greatest(extract(epoch from coalesce(
             (select n.created_at from agent_run_steps n where n.run_id = s.run_id and n.seq > s.seq
               order by n.seq limit 1),
@@ -205,6 +459,7 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
     groups: number;
     stages: (Group & { stage: string; count: number } & Measures)[];
     starts: (Group & { turns: number; warm: number } & Measures)[];
+    coldStarts: (Group & { cause: string; turns: number })[];
   }>(profileRows);
   const group = (g: Group) => ({ brain: g.brain, model: g.model });
   const inGroups = (a: Group, b: Group) => byWord(a.brain, b.brain) || byWord(a.model, b.model);
@@ -240,8 +495,24 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
         coldFirstEventMedianMs: wholeOrNull(s.coldFirstEventMedianMs),
         coldFirstEventP90Ms: wholeOrNull(s.coldFirstEventP90Ms),
         coldFirstEventP99Ms: wholeOrNull(s.coldFirstEventP99Ms),
+        firstRequestMedianMs: wholeOrNull(s.firstRequestMedianMs),
+        firstRequestP90Ms: wholeOrNull(s.firstRequestP90Ms),
+        apiWaitMedianMs: wholeOrNull(s.apiWaitMedianMs),
+        apiWaitP90Ms: wholeOrNull(s.apiWaitP90Ms),
+        firstTokenMedianMs: wholeOrNull(s.firstTokenMedianMs),
+        firstTokenP90Ms: wholeOrNull(s.firstTokenP90Ms),
+        firstAssistantMedianMs: wholeOrNull(s.firstAssistantMedianMs),
+        firstAssistantP90Ms: wholeOrNull(s.firstAssistantP90Ms),
+        retriedTurns: Number(s.retriedTurns ?? 0),
+        retries: wholeOrNull(s.retries) ?? 0,
+        retryDelayMs: wholeOrNull(s.retryDelayMs) ?? 0,
+        thinkingCharsMedian: wholeOrNull(s.thinkingCharsMedian),
+        thinkingCharsP90: wholeOrNull(s.thinkingCharsP90),
       }))
       .sort((a, b) => inGroups(a, b) || b.turns - a.turns),
+    coldStarts: (found?.coldStarts ?? [])
+      .map((c) => ({ ...group(c), cause: c.cause, turns: Number(c.turns) }))
+      .sort((a, b) => inGroups(a, b) || b.turns - a.turns || byWord(a.cause, b.cause)),
     waits: rowsOf<Group & { cause: string; waits: number; runs: number } & Measures>(waitRows)
       .map((w) => ({
         cause: w.cause,
@@ -254,5 +525,207 @@ export async function operatorRunTimings(db: Database, query: RunTimingsQuery, n
         totalSec: wholeOrNull(w.totalSec),
       }))
       .sort((a, b) => inGroups(a, b) || b.waits - a.waits || byWord(a.cause, b.cause)),
+  };
+}
+
+/** The longest window of `operatorReplyTimes`, by hour or by day. */
+export const REPLY_TIMES_MAX_DAYS = 31;
+/** A short ask: a person's message under this many characters, which should get the quickest replies. */
+export const SHORT_ASK_CHARS = 40;
+export const REPLY_TIME_BUCKETS = ["hour", "day"] as const;
+/** The brains a reply time is split by, each by its own name: none yet (or one no longer known) is `other`. */
+export const REPLY_BRAINS = [...BRAIN_KINDS, "other"] as const;
+export const REPLY_WAIT_CAUSES = ["room", "offline", "other"] as const;
+/**
+ * The server's own lines a run posts before (or instead of) its answer, by `bodyCode`: no AI to think with, a plan at
+ * its limit or switched, a computer or provider not answering, the asker at their limit. None is a reply: within a
+ * second, they'd pass for the quickest ones.
+ */
+export const NOT_A_REPLY = "^(no_ai|plan_limit|plan_account_moved|brain_unavailable|provider_|person_limit)";
+
+export interface ReplyTimesQuery {
+  /** ISO 8601 instants: runs created at or after `from` and before `to`. */
+  from: string;
+  to: string;
+  bucket?: (typeof REPLY_TIME_BUCKETS)[number];
+}
+
+/**
+ * How long people waited for agents, per UTC hour or day of the runs created in a window, across workspaces: from a
+ * person's message to the run's first message in the conversation (replies, by brain and by trigger, and the same
+ * for short asks), how computer turns started, and the waits for a computer. Counts and times only.
+ */
+export async function operatorReplyTimes(db: Database, query: ReplyTimesQuery, now = new Date()) {
+  const [from, to] = [instantOf(query.from), instantOf(query.to)];
+  const apart = from && to ? Date.parse(to) - Date.parse(from) : 0;
+  if (!from || !to || apart <= 0 || apart > REPLY_TIMES_MAX_DAYS * 86_400_000) {
+    throw new ValidationError(
+      `from and to are ISO 8601 instants, from before to, at most ${REPLY_TIMES_MAX_DAYS} days apart`,
+      "analytics.range",
+    );
+  }
+  const bucket = query.bucket ?? "day";
+  if (!REPLY_TIME_BUCKETS.includes(bucket)) throw new ValidationError("bucket is hour or day");
+  const at = sql.raw(
+    `to_char(date_trunc('${bucket}', ar.created_at, 'UTC') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:00:00"Z"')`,
+  );
+  const runsIn = sql`ar.created_at >= ${from}::timestamptz and ar.created_at < ${to}::timestamptz and not ar.background`;
+  const brain = sql.raw(
+    `case when ar.brain in (${BRAIN_KINDS.map((b) => `'${b}'`).join(", ")}) then ar.brain else 'other' end`,
+  );
+  const ms = (column: string, filter = "") => [0.5, 0.9, 0.99].map((q) => sql.raw(pct(q, column, filter)));
+  const [p50, p90, p99] = ms("ms");
+  const [s50, s90, s99] = ms("ms", "short");
+
+  const [replyRows, startRows, waitRows] = await Promise.all([
+    // A person's message (hop 1) and its run's first message. The bounds on `created_at` let each lookup read only
+    // the month partitions they reach; a trigger not found there (an ask joined later) counts from the run's start.
+    heavyRead(
+      db,
+      sql`
+      with s as materialized (
+        select ${at} as at, ${brain} as brain, ar.trigger::text as trigger, q.short,
+          extract(epoch from (
+            select min(m.created_at) from messages m where m.agent_run_id = ar.id
+              and m.created_at >= ar.created_at - interval '1 minute' and m.created_at < ar.created_at + interval '2 days'
+              and coalesce(m.meta->>'bodyCode', '') !~ '${sql.raw(NOT_A_REPLY)}'
+          ) - coalesce(q.asked, ar.created_at)) * 1000 as said
+        from agent_runs ar
+        left join lateral (
+          select m.created_at as asked, char_length(m.body) < ${SHORT_ASK_CHARS} as short,
+            m.author_type = 'person' as person
+          from messages m
+          where m.id = ar.trigger_message_id and m.created_at <= ar.created_at + interval '1 minute'
+            and m.created_at > ar.created_at - interval '1 day'
+          limit 1
+        ) q on true
+        -- An agent's message can start a hop-1 run too (a routine's report that names another agent): nobody waits on it.
+        where ${runsIn} and ar.hop = 1 and q.person is not false
+      ), r as (
+        -- A run that never replied stays null: greatest() would make it 0.
+        select at, brain, trigger, short, case when said < 0 then 0 else said end as ms from s
+      )
+      select at, case when grouping(brain) = 1 then 'all' else brain end as brain,
+        case when grouping(trigger) = 1 then 'all' else trigger end as trigger,
+        count(*)::int as runs, count(ms)::int as replied, ${p50} as "p50Ms", ${p90} as "p90Ms", ${p99} as "p99Ms",
+        count(*) filter (where short)::int as "shortRuns", count(ms) filter (where short)::int as "shortReplied",
+        ${s50} as "shortP50Ms", ${s90} as "shortP90Ms", ${s99} as "shortP99Ms"
+      from r group by grouping sets ((at), (at, brain), (at, trigger)) order by 1, 2, 3`,
+    ),
+    heavyRead(
+      db,
+      sql`
+      with b as (
+        select ${at} as at, t.value->'warm' = 'true'::jsonb as warm,
+          ${sql.raw(msSql("t.value->'firstEventMs'"))} as first
+        from agent_runs ar, jsonb_array_elements(${sql.raw(listSql("ar.profiles"))}) c,
+          jsonb_array_elements(${sql.raw(listSql("c.value->'brain'"))}) t
+        where ${runsIn} and jsonb_typeof(t.value->'warm') = 'boolean'
+      )
+      select at, count(*)::int as turns, count(*) filter (where warm)::int as warm,
+        ${sql.raw(pct(0.5, "first", "warm"))} as "warmFirstEventP50Ms",
+        ${sql.raw(pct(0.9, "first", "warm"))} as "warmFirstEventP90Ms",
+        ${sql.raw(pct(0.5, "first", "not warm"))} as "coldFirstEventP50Ms",
+        ${sql.raw(pct(0.9, "first", "not warm"))} as "coldFirstEventP90Ms"
+      from b group by at order by at`,
+    ),
+    // As `operatorRunTimings`'s waits: each lasts until the run's next step, its end, or the earlier of now and `to`.
+    heavyRead(
+      db,
+      sql`
+      with w as materialized (
+        select ${at} as at, ar.id,
+          case s.data->>'code' when 'busy' then 'room' when 'machine_offline' then 'offline' else 'other' end as cause,
+          greatest(extract(epoch from coalesce(
+            (select n.created_at from agent_run_steps n where n.run_id = s.run_id and n.seq > s.seq
+              order by n.seq limit 1),
+            ar.finished_at, least(${now.toISOString()}::timestamptz, ${to}::timestamptz)) - s.created_at) * 1000,
+            0) as ms
+        from agent_runs ar join agent_run_steps s on s.run_id = ar.id
+        where ${runsIn} and s.kind = 'error' and s.data->>'reason' = 'brain_unavailable'
+      )
+      select at, cause, count(*)::int as waits, count(distinct id)::int as runs, ${p50} as "p50Ms", ${p90} as "p90Ms"
+      from w group by 1, 2 order by 1, 2`,
+    ),
+  ]);
+
+  type Measures = Record<string, number | null>;
+  type Trigger = "all" | (typeof schema.agentRunTriggerEnum.enumValues)[number];
+  return {
+    from,
+    to,
+    bucket,
+    replies: rowsOf<{ at: string; brain: string; trigger: Trigger } & Measures>(replyRows).map((r) => ({
+      at: r.at,
+      brain: r.brain,
+      trigger: r.trigger,
+      runs: Number(r.runs),
+      replied: Number(r.replied),
+      p50Ms: wholeOrNull(r.p50Ms),
+      p90Ms: wholeOrNull(r.p90Ms),
+      p99Ms: wholeOrNull(r.p99Ms),
+      short: {
+        runs: Number(r.shortRuns),
+        replied: Number(r.shortReplied),
+        p50Ms: wholeOrNull(r.shortP50Ms),
+        p90Ms: wholeOrNull(r.shortP90Ms),
+        p99Ms: wholeOrNull(r.shortP99Ms),
+      },
+    })),
+    computerStarts: rowsOf<{ at: string } & Measures>(startRows).map((s) => ({
+      at: s.at,
+      turns: Number(s.turns),
+      warm: Number(s.warm),
+      warmFirstEventP50Ms: wholeOrNull(s.warmFirstEventP50Ms),
+      warmFirstEventP90Ms: wholeOrNull(s.warmFirstEventP90Ms),
+      coldFirstEventP50Ms: wholeOrNull(s.coldFirstEventP50Ms),
+      coldFirstEventP90Ms: wholeOrNull(s.coldFirstEventP90Ms),
+    })),
+    waits: rowsOf<{ at: string; cause: (typeof REPLY_WAIT_CAUSES)[number] } & Measures>(waitRows).map((w) => ({
+      at: w.at,
+      cause: w.cause,
+      waits: Number(w.waits),
+      runs: Number(w.runs),
+      p50Ms: wholeOrNull(w.p50Ms),
+      p90Ms: wholeOrNull(w.p90Ms),
+    })),
+  };
+}
+
+/** The longest window of `operatorCliRuns`, and the most CLI builds it lists. */
+export const CLI_RUNS_MAX_DAYS = 7;
+export const CLI_RUNS_ROWS_MAX = 200;
+
+/**
+ * The runs created in a window that ended (`done` or `failed`), by the coding CLI and version they thought with
+ * (`agent_runs.cli`), and how many of them failed: what the Cloud compares a CLI's new build with the one before by.
+ * Every failure counts, whatever its cause. Only values shaped as `recordRunBrain` writes them.
+ */
+export async function operatorCliRuns(db: Database, query: { from: string; to: string }) {
+  const [from, to] = [instantOf(query.from), instantOf(query.to)];
+  const apart = from && to ? Date.parse(to) - Date.parse(from) : 0;
+  if (!from || !to || apart <= 0 || apart > CLI_RUNS_MAX_DAYS * 86_400_000) {
+    throw new ValidationError(
+      `from and to are ISO 8601 instants, from before to, at most ${CLI_RUNS_MAX_DAYS} days apart`,
+      "analytics.range",
+    );
+  }
+  const rows = rowsOf<{ cli: string; runs: number; failed: number }>(
+    await heavyRead(
+      db,
+      sql`select ar.cli, count(*)::int as runs, (count(*) filter (where ar.status = 'failed'))::int as failed
+        from agent_runs ar
+        where ar.created_at >= ${from}::timestamptz and ar.created_at < ${to}::timestamptz
+          and ar.status in ('done', 'failed') and ar.cli ~ '^[a-z]{1,20} [0-9][0-9A-Za-z.+-]{0,63}$'
+        group by ar.cli order by runs desc, ar.cli limit ${CLI_RUNS_ROWS_MAX}`,
+    ),
+  );
+  return {
+    from,
+    to,
+    clis: rows.map(({ cli, runs, failed }) => {
+      const [name = "", version = ""] = cli.split(" ");
+      return { cli: name, version, runs, failed };
+    }),
   };
 }

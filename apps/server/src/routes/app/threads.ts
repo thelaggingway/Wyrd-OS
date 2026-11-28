@@ -32,7 +32,7 @@ import {
 import { PreviewMeta } from "./schemas";
 
 const tags = ["Threads"];
-const Actor = z.object({ type: z.enum(["person", "agent"]), id: z.string().nullable() });
+const Actor = z.object({ type: z.enum(["person", "agent", "app"]), id: z.string().nullable() });
 const State = z.enum(["open", "closed", "archived"]);
 const Tab = z.enum(["all", "working", "missions", "closed", "archived"]);
 
@@ -41,7 +41,7 @@ const Thread = z
     id: z.uuid().openapi({ description: "The root message id (what replies carry as `threadId`)." }),
     channelId: z.uuid(),
     channelName: z.string(),
-    channelKind: z.enum(["channel", "dm", "task", "file"]),
+    channelKind: z.enum(["channel", "dm", "task", "file", "code"]),
     title: z.string().nullable().openapi({ description: "Null: show `rootText`." }),
     rootText: z.string(),
     rootAuthor: Actor,

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createTestDatabase } from "@agenteschat/db/testing";
-import type { PGlite } from "@electric-sql/pglite";
+import { createTestDatabase, pgliteNotifier } from "@agenteschat/db/testing";
 import {
   createMemoryPresence,
   createMemoryPubSub,
@@ -13,18 +12,6 @@ import {
   type PubSub,
   type RealtimeEvent,
 } from "../src";
-
-function pgliteNotifier(pg: PGlite): PgNotifier {
-  return {
-    async listen(channel, onPayload) {
-      const unsub = await pg.listen(channel, onPayload);
-      return async () => unsub();
-    },
-    async notify(channel, payload) {
-      await pg.query("select pg_notify($1, $2)", [channel, payload]);
-    },
-  };
-}
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
@@ -193,7 +180,7 @@ test("postgres pub/sub: a LISTEN gone deaf is made again, and once it hears its 
   await until(() => state.listens === 2);
   expect(state.listens).toBe(2);
   await until(() => resumed.length > 0);
-  expect(resumed).toEqual([{ type: "pubsub.resumed" }]);
+  expect(resumed).toEqual([{ type: "pubsub.resumed", full: true }]);
   await pubsub.publish("t", { type: "x", n: 1 });
   await until(() => got.length > 0);
   expect(got).toEqual([1]);
@@ -211,7 +198,7 @@ test("postgres pub/sub: postgres.js listening again after its connection came ba
   await pubsub.publish("t", { type: "x", n: 1 });
   await until(() => got.length > 0);
   expect(got).toEqual([1]);
-  expect(resumed).toEqual([{ type: "pubsub.resumed" }]);
+  expect(resumed).toEqual([{ type: "pubsub.resumed", full: true }]);
   await pubsub.close?.();
 });
 

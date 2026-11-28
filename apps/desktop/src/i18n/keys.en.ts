@@ -2,6 +2,22 @@ import type { Widen } from "@agenteschat/i18n/widen";
 
 /** The desktop app's own strings in English, the source: every other language follows this shape. */
 export const desktopEn = {
+  permissionAsk: {
+    title: "agentes.chat needs {{permission}}",
+    done: "I allowed it",
+    later: "Not now",
+    trayTitle: "Waiting for {{permission}}",
+    why: {
+      app_management: "Agents need it to change apps on this {{device}}.",
+      screen: "Agents need it to take screenshots of this {{device}}.",
+      accessibility: "Agents need it to click and type in apps on this {{device}}.",
+      disk: "Agents need it to open your files without macOS asking for each folder.",
+      network: "Agents need it to reach phones and devices on your network.",
+      camera: "Agents need it to use this {{device}}'s camera.",
+      microphone: "Agents need it to use this {{device}}'s microphone.",
+      automation: "Agents need it to control other apps on this {{device}}.",
+    },
+  },
   device: { mac: "Mac", windows: "PC", linux: "computer" },
   /** The app's own windows by name (the Dock's list, the Window menu, Mission Control). */
   windowTitle: { welcome: "Welcome", prefs: "Preferences" },
@@ -64,6 +80,12 @@ export const desktopEn = {
         capturing: "taking a screenshot",
         tabs: "switching tabs",
       },
+    },
+    apps: {
+      title: "{{agent}} is using {{app}}",
+      detail: "Your mouse and keyboard stay yours",
+      stop: "Stop",
+      stopped: "{{agent}} stopped using your apps",
     },
     label: "agentes.chat",
     now: "Now",
@@ -131,12 +153,19 @@ export const desktopEn = {
     allowedOne: "{{folder}} allowed for {{agent}}",
     allowedAll: "{{folder}} allowed for all agents",
     denied: "Declined. {{agent}} lets them know in the chat.",
+    /** The computer's own reason, in English (a folder that no longer exists, a system folder, too many folders). */
+    answerFailed: "Couldn't answer this request: {{message}}",
     notifTitle: "{{agent}} wants to use the folder {{folder}}",
     allowedTitle: "{{name}} turned on {{tool}} from agentes.chat",
     allowedBody: "If it wasn't you, undo it here.",
     allowedUndo: "Undo",
     allowedOk: "OK",
     allowedUndone: "Off again: {{tool}}",
+    /** Someone asked from agentes.chat (the site or the phone) for a folder here: the popover's card and the notification. */
+    pickTitle: "{{name}} asks for a folder for the agents",
+    pickTitleAgent: "{{name}} asks for a folder for {{agent}}",
+    pickBody: "Choose which folder to allow on this {{device}}.",
+    pickChoose: "Choose folder",
     quitTitle: "Quit agentes.chat?",
     quitBody:
       "Agents can't use this {{device}} while the app is closed. What is already running finishes and sends the result when you open it again.",
@@ -162,26 +191,26 @@ export const desktopEn = {
     cloudText: "Always on. We take care of everything, you just use it.",
     here: "On this {{device}}",
     hereText: "Your agents work while the app is open.",
-    box: "On a computer that's always on",
-    boxText: "A Mac mini or an office computer, installed once.",
+    box: "On a server or VPS",
+    boxText: "Always on, even with this app closed. You install it once.",
     goCloud: "Continue in the cloud",
     goHere: "Get this {{device}} ready",
     goBox: "See how to install",
     haveOne: "Have one already?",
     haveOneLink: "Sign in by its address",
   },
-  /** "Num computador sempre ligado": the one-command install, and the instructions to send to whoever installs it. */
+  /** "On a server or VPS": the one-command install, and the instructions to send to whoever installs it. */
   install: {
-    title: "Install on a computer that's always on",
+    title: "Install on a server or VPS",
     lead: "It's done once. Then it keeps running by itself, even with this app closed.",
-    step1: "On the computer that stays on, open the Terminal and paste this",
+    step1: "On the server, open the Terminal (or connect over SSH) and paste this",
     step2: "At the end a link shows up. Open it here and that's it.",
     noLink: "No link?",
     someoneElse: "Someone else will install it?",
     copy: "Copy the instructions",
     copied: "Instructions copied",
     /** What "Copy the instructions" puts on the clipboard, to send to whoever installs it. */
-    text: "To install agentes.chat on a computer that stays on (a Mac mini, an office computer or a server):\n\n1. On that computer, open the Terminal and paste this:\n{{command}}\n\n2. At the end a link shows up. Send it to me: it opens the workspace in the app.",
+    text: "To install agentes.chat on a server or VPS (or a computer that stays on, like a Mac mini):\n\n1. On the server, open the Terminal (or connect over SSH) and paste this:\n{{command}}\n\n2. At the end a link shows up. Send it to me: it opens the workspace in the app.",
   },
   connect: {
     title: "Sign in to a workspace that already exists",
@@ -252,7 +281,7 @@ export const desktopEn = {
     getTailscale: "Get Tailscale",
     usage: "Send anonymous usage statistics to agentes.chat",
     usageText:
-      "Counts such as people, agents, machine sizes, AI tokens used and how much data the agents' browsers send and receive. Never messages, files, names or sites.",
+      "Counts such as people, agents, machine sizes, AI tokens used, how much data the agents' browsers send and receive, and how fast the apps open and run. Never messages, files, names or sites.",
     start: "Start",
     setting: "Getting everything ready",
     /** Under the form, beside a sleeping agent: what closing the app does. */
@@ -509,6 +538,16 @@ export const desktopEn = {
     linkBody: "If you didn't ask for this, choose Not now.",
     waiting: "Waiting for {{by}} to let it in…",
     done: "Connected to {{org}}",
+    /** Once it's in: one switch, off, that lets the whole workspace use it (Preferences › This Mac holds the rest). */
+    share: "Let the whole workspace use it",
+    /** A workspace with its own computer opens websites through this one's internet (ADR 0237); on by default. */
+    internet: "Agents use this computer's internet",
+    internetOn: "Websites the agents open see your location",
+    internetOff: "Off: agents use their usual connection",
+    internetHint:
+      "The workspace's agents open websites through this computer's connection. Only websites and never anything on your own network. While this computer is offline, they use their usual connection.",
+    shareOff: "Only you for now",
+    shareHint: "Everyone's agents in {{org}} can run tasks on it, as your user.",
     addFolders: "Add folders",
     expired: "This link expired. Make a new one in Devices.",
     openDevices: "Open Devices",
@@ -564,6 +603,11 @@ export const desktopEn = {
     grokDesc: "Writes and changes code in the allowed folders, with your Grok account.",
     antigravityName: "Antigravity CLI",
     antigravityDesc: "Writes and changes code in the allowed folders, with your Gemini account.",
+    devinName: "Devin CLI",
+    devinDesc: "Writes and changes code in the allowed folders, with your Devin account.",
+    /** On Windows, in place of its install line: the Devin CLI isn't pinned there (ADR 0253). */
+    devinWindows:
+      "Devin doesn't run on Windows yet: here its CLI can't keep each account's sign-in apart. Agents think with Devin on a Mac or Linux computer.",
     found: "Found",
     notFound: "Not found",
     loggedOut: "Not signed in",
@@ -869,6 +913,8 @@ export const desktopEn = {
       brainMax: "Open conversations",
       brainMaxDesc: "How many stay open in each workspace. More of them answer faster but use more memory.",
       brainIdle: "Close an idle conversation after",
+      /** Under a limit whose number differs between the workspaces this computer works for. `values`: "Acme 3, Beta 12". */
+      mixed: "Not the same everywhere: {{values}}. A change here sets all of them.",
       folder: "Agents' folder",
       folderDesc: "One folder per workspace, with a folder for each agent.",
     },

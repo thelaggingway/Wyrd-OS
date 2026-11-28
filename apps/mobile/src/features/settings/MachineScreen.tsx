@@ -8,6 +8,7 @@ import {
   useAllAgents,
   useAllowMachineTool,
   useApi,
+  useAskMachineFolder,
   useBrowserHandoffMutations,
   useBrowserProfileMutations,
   useBrowserProfiles,
@@ -18,7 +19,18 @@ import {
   useReduceMachineAccess,
 } from "@agenteschat/client";
 import { computerName, setupView } from "@agenteschat/client/lib/computer";
-import { offlineCauseText } from "@agenteschat/client/lib/devices";
+import {
+  maintenanceDetails,
+  maintenanceLine,
+  maintenanceOf,
+  maintenanceShort,
+} from "@agenteschat/client/lib/computer-maintenance";
+import {
+  mayChangeTasks,
+  offlineCauseText,
+  RUNNER_UPDATE_COMMAND,
+  taskLimitLine,
+} from "@agenteschat/client/lib/devices";
 import { errorText } from "@agenteschat/client/lib/errors";
 import { clockAt, firstName, formatTime, joinNames } from "@agenteschat/client/lib/format";
 import { agentGrammar } from "@agenteschat/client/lib/grammar";
@@ -26,9 +38,11 @@ import {
   allowedFolders,
   allowsInApp,
   canReduceAccess,
+  codexSandboxNote,
   commandInReason,
   computerKind,
   computerState,
+  egressViaText,
   folderName,
   hostDescKey,
   isPaused,
@@ -60,6 +74,7 @@ import { SvgXml } from "react-native-svg";
 import { ComputerPortrait } from "@/computer/ComputerPortrait";
 import { useOrg } from "@/providers/org";
 import {
+  Button,
   Chip,
   EmptyState,
   GroupedFooter,
@@ -78,7 +93,7 @@ import { openPage } from "../ai/parts";
 import { openComputer } from "../computer/AgentComputerRow";
 import { ComputerSection } from "../devices/ComputerSection";
 import { findDevice } from "../devices/logic";
-import { StatusLine } from "../devices/parts";
+import { PermissionWaits, StatusLine } from "../devices/parts";
 import { useDevices } from "../devices/queries";
 import { MachineToolButton } from "../devices/ToolOneClick";
 import { AgentFace } from "../shared/Face";
@@ -217,6 +232,9 @@ function MachinePage({ machineId }: { machineId: string }) {
   // Pause from here: whoever connected it and admins, while it's online; never the workspace's own computer.
   const pausable = m.canManage && m.online && !managed;
 
+  // What we do to it (ADR 0257): away, said instead of offline; its line and details in the facts.
+  const told = maintenanceOf(m);
+  const away = !m.online && told?.away ? told : null;
   // One status word (the device's own line says it when there is one): paused outranks online.
   const status: { icon: IconName; label: string } | null = device
     ? null
@@ -224,15 +242,20 @@ function MachinePage({ machineId }: { machineId: string }) {
       ? { icon: "pause", label: paused }
       : m.online
         ? { icon: "check", label: t("machines.online") }
-        : { icon: "circle", label: t("machines.offline") };
+        : away
+          ? { icon: "swap", label: maintenanceShort(t, away) }
+          : { icon: "circle", label: t("machines.offline") };
   // One facts line, and why it's paused while it is.
   const facts = [
     managed
       ? [setup?.specs ? t("computerSetup.specs", setup.specs) : null, m.online ? null : seenText(t, i18n.language, m)]
           .filter(Boolean)
           .join(" · ")
-      : [t(`machines.os.${osOf(m.os)}`), m.arch, seenText(t, i18n.language, m)].filter(Boolean).join(" · "),
+      : [t(`machines.os.${osOf(m.os)}`), seenText(t, i18n.language, m)].filter(Boolean).join(" · "),
     isPaused(m) ? (pausedByText(t, i18n.language, m.paused, meId ?? "") ?? t("machines.pausedHint")) : null,
+    told && (away || m.online)
+      ? [maintenanceLine(t, told), ...maintenanceDetails(t, i18n.language, told)].join(" ")
+      : null,
   ].filter((x): x is string => Boolean(x));
   // What most people never need, behind one "Detalhes" row, as the web's.
   const details = [
@@ -242,6 +265,7 @@ function MachinePage({ machineId }: { machineId: string }) {
     // System mode: each agent works in its own home, never in the folder the computer was connected from.
     m.mode === "system" && !managed && m.kind !== "host" ? t("machines.agentUsers") : null,
     managed && m.online && m.egressWaiting ? t("machines.egress.waiting") : null,
+    egressViaText(t, m),
     managed && m.networkTransition
       ? t(m.networkTransition.state === "draining" ? "machines.egress.draining" : "machines.egress.restart", {
           when: formatTime(i18n.language, m.networkTransition.deadline),
@@ -255,7 +279,9 @@ function MachinePage({ machineId }: { machineId: string }) {
   const causeLine =
     s?.kind === "offline" && s.cause && s.lastSeenAt
       ? offlineCauseText(t, s.cause, clockAt(i18n.language, s.lastSeenAt), "line")
-      : null;
+      : device
+        ? taskLimitLine(t, device, mayChangeTasks(device, meId ?? "", can(org, "configure")))
+        : null;
   const egressIp = managed && m.online ? (m.egress?.ip ?? null) : null;
   const flag = egressIp ? countryFlagSvg(m.egress?.country) : null;
 
@@ -275,6 +301,26 @@ function MachinePage({ machineId }: { machineId: string }) {
           </Text>
         ))}
       </View>
+
+      {device?.permissions?.length ? (
+        <>
+          <Gap />
+          <PermissionWaits device={device} />
+        </>
+      ) : null}
+
+      {m.canManage && m.update ? (
+        <>
+          <Gap />
+          <GroupedFooter>{t(`machines.runnerBehind.${m.update}`, { computer: title })}</GroupedFooter>
+          {m.update === "command" ? (
+            <>
+              <Gap />
+              <CommandBlock command={RUNNER_UPDATE_COMMAND} />
+            </>
+          ) : null}
+        </>
+      ) : null}
 
       {details.length > 0 || egressIp ? (
         <>
@@ -584,13 +630,17 @@ function ToolsSection({ machine: m, onReduce }: { machine: Machine; onReduce: (r
           ]
             .filter(Boolean)
             .join(" ");
+          const label = t(`machines.access.tool.${tool}`);
+          // Codex on Windows: what holds its commands there, when that is less than MXC.
+          const note = tool === "codex" ? codexSandboxNote(t, m) : null;
           return (
             <GroupedRow
               key={tool}
               {...(tool === "commands"
                 ? { icon: "code" as const }
                 : { leading: <ProviderLogo id={tool} size="sm" off={!on} /> })}
-              label={t(`machines.access.tool.${tool}`)}
+              label={label}
+              {...(note ? { hint: { name: t("common.about", { label }), text: note } } : {})}
               sub={sub}
               subLines={3}
               media
@@ -902,25 +952,19 @@ function BrowserSection({ machine: m, onTurnOff }: { machine: Machine; onTurnOff
 }
 
 /**
- * Apps on the agents' screens (ADR 0062): whether agents can use apps on their own screens here; when not, on Linux
- * the computer's own words on what is missing with the command in them, elsewhere that it takes a Linux computer;
- * or the two switches to turn on. Not on the workspace's own computer.
+ * Each agent's own screen, on a Linux computer (ADR 0062): whether agents can use apps on their own screens here; when
+ * not, the computer's own words on what is missing with the command in them; or the two switches to turn on. Not on a
+ * Mac or Windows computer, where it can't apply, nor on the workspace's own computer.
  */
 function DesktopUseSection({ machine: m }: { machine: Machine }) {
   const { t } = useTranslation();
   const oneClick = toolOneClick(m, useMeId());
   const use = m.desktopUse;
-  if (!use) return null;
+  if (!use || m.os !== "linux") return null;
   const off = use.available && !(m.access?.tools.desktop && m.access.tools.commands);
   const desktopOff = (["desktop", "commands"] as const).filter((tool) => m.access?.tools[tool] !== true);
-  // A Mac or Windows has nothing to install for it: said in the app's words, not the runner's English.
-  const linux = m.os === "linux";
-  const reason = use.available
-    ? null
-    : linux
-      ? machineReasonText(t, use, "desktop_use_install")
-      : t("desktop.use.linuxOnly");
-  const command = linux && !use.available ? commandInReason(use.reason) : null;
+  const reason = use.available ? null : machineReasonText(t, use, "desktop_use_install");
+  const command = use.available ? null : commandInReason(use.reason);
   return (
     <>
       <GroupedHeader
@@ -969,32 +1013,64 @@ function DesktopUseSection({ machine: m }: { machine: Machine }) {
   );
 }
 
-/** "Para liberar mais": never a button that grants; granting happens on the computer (its app, or the command). */
+/**
+ * "Para liberar mais", as the web's: granting happens on the computer. Where the agentes.chat app runs it, "Liberar
+ * uma pasta" asks the app there to open the system's folder picker for whoever is at it; elsewhere how to do it
+ * there, the command folded as the way without the app.
+ */
 function GrantSection({ machine: m }: { machine: Machine }) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const ask = useAskMachineFolder(useOrgId());
+  // A folder allowed there (picked, or any other way, a folder already allowed given to more agents too) ends the wait.
+  const folders = JSON.stringify(m.access?.folders ?? []);
+  const [askedAt, setAskedAt] = useState<string | null>(null);
+  const waiting = askedAt !== null && askedAt === folders;
   // In system mode the runner's settings are root's (ADR 0057): allowing takes the computer's administrator.
   const system = m.mode === "system";
   const app = allowsInApp(m.os);
   return (
     <>
       <GroupedHeader>{t("machines.access.grantTitle")}</GroupedHeader>
-      {m.canManage ? (
+      {m.canManage && m.folderPick ? (
         <>
           <GroupedFooter>
-            {[
-              app
-                ? t("machines.access.grantText")
-                : system
-                  ? t("machines.access.grantTextAdmin")
-                  : t("machines.access.grantTextTerminal"),
-              app ? t("machines.access.grantTerminal") : null,
-            ]
-              .filter(Boolean)
-              .join(" ")}
+            {waiting
+              ? t("machines.access.pickWaiting", { machine: m.name })
+              : t("machines.access.pickText", { machine: m.name })}
           </GroupedFooter>
           <Gap />
-          <CommandBlock
+          <Button
+            variant="primary"
+            wide
+            label={t("machines.access.pick")}
+            loading={ask.isPending}
+            onPress={() =>
+              ask.mutate(
+                { machineId: m.id },
+                {
+                  onSuccess: () => {
+                    setAskedAt(folders);
+                    toast({ title: t("machines.access.picked", { machine: m.name }), icon: "check" });
+                  },
+                  onError: (err) => toast({ title: errorText(t, err), icon: "x" }),
+                },
+              )
+            }
+          />
+        </>
+      ) : m.canManage ? (
+        <>
+          <GroupedFooter>
+            {app
+              ? t("machines.access.grantText")
+              : system
+                ? t("machines.access.grantTextAdmin")
+                : t("machines.access.grantTextTerminal")}
+          </GroupedFooter>
+          <TerminalFallback
             command={grantCommand(m, t("machines.access.pathPlaceholder"), t("machines.access.agentPlaceholder"))}
+            label={t("machines.access.grantTerminalMore")}
           />
         </>
       ) : (

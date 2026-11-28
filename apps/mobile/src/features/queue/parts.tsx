@@ -5,28 +5,38 @@ import {
   fanOutOf,
   fanOutText,
   fanShows,
+  queueWaitText,
   waitingFor,
 } from "@agenteschat/client/lib/computer-queue";
+import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, View } from "react-native";
 import { Button, Chip, LineIcon, Text } from "@/ui";
 import { MSG_AVATAR, MSG_GAP, MSG_INSET, rowFrame } from "../chat/logic";
 import { useQuietInset, useRhythm, useRowLook } from "../chat/look";
+import { useRowDirectory, useRowMeId } from "../chat/row-data";
 import { AgentFace } from "../shared/Face";
-import { useColors, useDirectory, useMeId } from "../shared/hooks";
+import { useColors } from "../shared/hooks";
 import { useAgentsQueue, useOpenQueue } from "./QueueSheet";
 
 /**
  * Where "thinking" shows, at the end of the conversation, for a run that waits in line for its computer
- * (`conversationWaits`: one per run): its face and name, one line whatever holds it ("In line · starts soon"), "You go
- * first" on my own request, and "See queue". It lives as long as the receipts say the run waits.
+ * (`conversationWaits`: one per run): its face and name, one line ("In line · starts soon", or
+ * "In line, after Ada" behind another agent's waiting turn), "You go first" on my own request, and "See queue". It
+ * lives as long as the receipts say the run waits.
  */
-export function QueueWaitRow({ channelId, wait: { agentId, runId } }: { channelId: string; wait: ConversationWait }) {
+export const QueueWaitRow = memo(function QueueWaitRow({
+  channelId,
+  wait: { agentId, runId },
+}: {
+  channelId: string;
+  wait: ConversationWait;
+}) {
   const rhythm = useRhythm();
   const { faces } = useRowLook();
   const { t } = useTranslation();
-  const dir = useDirectory();
-  const meId = useMeId();
+  const dir = useRowDirectory();
+  const meId = useRowMeId();
   const openQueue = useOpenQueue();
   const { machineId, queue } = useAgentsQueue([agentId]);
   const name = (id: string) => dir.anyAgent(id)?.name;
@@ -47,7 +57,7 @@ export function QueueWaitRow({ channelId, wait: { agentId, runId } }: { channelI
         <View style={styles.say}>
           <LineIcon name="wait" size={13} color={c.muted} variant="footnote" />
           <Text variant="footnote" tone="muted" style={styles.grow}>
-            {t("queue.waiting")}
+            {queueWaitText(t, queue, w, name)}
           </Text>
         </View>
         <View style={styles.acts}>
@@ -59,7 +69,7 @@ export function QueueWaitRow({ channelId, wait: { agentId, runId } }: { channelI
       </View>
     </View>
   );
-}
+});
 
 /**
  * Under an agent's message that called several agents: one strip instead of a "busy" line each. "12 agents called ·
@@ -70,7 +80,7 @@ export function FanStrip({ message: m, receipt }: { message: Message; receipt: M
   const rhythm = useRhythm();
   const inset = useQuietInset();
   const { t, i18n } = useTranslation();
-  const dir = useDirectory();
+  const dir = useRowDirectory();
   const c = useColors();
   const openQueue = useOpenQueue();
   const { machineId, queue } = useAgentsQueue(m.mentionedAgentIds);

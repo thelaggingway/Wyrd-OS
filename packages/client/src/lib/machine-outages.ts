@@ -1,5 +1,8 @@
-import type { MachineTool } from "../api/types";
+import type { TFunction } from "i18next";
+import type { ComputerMaintenance, MachineTool, PlanDropped } from "../api/types";
+import { maintenanceOf } from "./computer-maintenance";
 import { brainTool } from "./machines";
+import { planLabel, planOfAccount } from "./no-ai";
 
 /**
  * "Computador desconectado": when the computer that runs some agents' brain
@@ -13,7 +16,7 @@ import { brainTool } from "./machines";
  */
 
 /** The brains a computer runs. */
-export type ComputerBrain = "claude_code" | "codex" | "cursor" | "opencode" | "grok" | "antigravity";
+export type ComputerBrain = "claude_code" | "codex" | "cursor" | "opencode" | "grok" | "antigravity" | "devin";
 
 export interface OutageAgentLike {
   agentId: string;
@@ -29,6 +32,9 @@ export interface OutageLike {
   /** The workspace's own computer (ADR 0056 §10). */
   managed?: boolean;
   offlineSince: string;
+  /** Away for what we do to it (`maintenance` says what): it comes back by itself. */
+  moving?: boolean;
+  maintenance?: ComputerMaintenance | null;
   agents: readonly OutageAgentLike[];
   waitingRuns: number;
 }
@@ -54,6 +60,7 @@ export interface MoveResultLike {
   skipped: readonly { agentId: string; reason: string }[];
   resumed: number;
   stillWaiting: number;
+  planDropped?: readonly PlanDropped[];
 }
 
 // ── Counts and wording inputs ───────────────────────────────────────────────
@@ -214,6 +221,33 @@ export function moveOutcome(r: MoveResultLike) {
   };
 }
 
+/**
+ * After "Trocar", each agent that moved without its plan (a sign-in is a folder on one computer): where the plan is
+ * signed in and the way back. `signIn`: the plan to open Connect on for them, when there is any.
+ */
+export function planDroppedText(
+  t: TFunction,
+  r: MoveResultLike,
+  where: { from: string; to: string; nameOf: (agentId: string) => string },
+) {
+  const dropped = r.planDropped ?? [];
+  const lines = dropped.map((d) =>
+    t("outage.done.planDropped", {
+      name: where.nameOf(d.agentId),
+      plan: planLabel(t, planOfAccount(d)),
+      from: where.from,
+      to: where.to,
+    }),
+  );
+  const first = dropped[0];
+  return {
+    lines,
+    signIn: first
+      ? { agentId: first.agentId, agentIds: dropped.map((d) => d.agentId), plan: planOfAccount(first) }
+      : null,
+  };
+}
+
 // ── The chat's waiting card ─────────────────────────────────────────────────
 
 /** `meta.brainUnavailable` of a `brain_unavailable` message. */
@@ -239,7 +273,8 @@ export function brainUnavailableOf(meta: Record<string, unknown> | null | undefi
       x.brain === "cursor" ||
       x.brain === "opencode" ||
       x.brain === "grok" ||
-      x.brain === "antigravity"
+      x.brain === "antigravity" ||
+      x.brain === "devin"
         ? x.brain
         : "claude_code",
     code: str(x.code) ?? "",
@@ -269,6 +304,7 @@ const SWITCHES: readonly string[] = [
   "opencode",
   "grok",
   "antigravity",
+  "devin",
   "commands",
   "browser",
   "desktop",
@@ -305,7 +341,14 @@ export const waitsForComputer = (info: Pick<BrainUnavailableInfo, "machineId" | 
  * Unknown when the outages aren't loaded or the message doesn't say which computer.
  */
 export type WaitCardState =
-  | { kind: "waiting"; machineId: string; computer: string; waiting: OutageAgentLike | null }
+  | {
+      kind: "waiting";
+      machineId: string;
+      computer: string;
+      waiting: OutageAgentLike | null;
+      /** Away for what we do to it: the card says that, never that it isn't answering. */
+      maintenance: ComputerMaintenance | null;
+    }
   | { kind: "moved"; machineId: string; computer: string }
   | { kind: "back"; machineId: string }
   | { kind: "unknown" };
@@ -321,7 +364,14 @@ export function waitCardState(
   const agentId = info.agentId ?? authorId;
   const agent = agentId ? (o.agents.find((a) => a.agentId === agentId) ?? null) : null;
   if (agentId && !agent) return { kind: "moved", machineId: o.machineId, computer: o.name };
-  return { kind: "waiting", machineId: o.machineId, computer: o.name, waiting: agent };
+  const maintenance = maintenanceOf(o);
+  return {
+    kind: "waiting",
+    machineId: o.machineId,
+    computer: o.name,
+    waiting: agent,
+    maintenance: maintenance?.away ? maintenance : null,
+  };
 }
 
 /**

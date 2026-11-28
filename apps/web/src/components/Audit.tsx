@@ -14,6 +14,7 @@ import {
   auditQueryOf,
   auditReason,
   auditReasonKey,
+  auditReasonLabel,
   auditRoutine,
   auditSecretText,
   auditSentence,
@@ -35,6 +36,7 @@ import {
   Icon,
   Menu,
   MenuItem,
+  Refreshing,
   Segmented,
   Select,
   Toolbar,
@@ -45,6 +47,7 @@ import { useTranslation } from "react-i18next";
 import { ActorAvatar, AgentAvatar } from "@/components/AgentAvatar";
 import { DetailsLink } from "@/components/details-link";
 import { ErrorState, LoadingList } from "@/components/Loading";
+import { MetaLine } from "@/components/MetaLine";
 import { useOrg } from "@/components/org-context";
 import { SidePanel } from "@/components/SidePanel";
 import { useDirectory } from "@/hooks/useDirectory";
@@ -117,65 +120,67 @@ export function AuditSection({ agent }: { agent?: string }) {
         />
       </Toolbar>
 
-      {audit.isPending ? (
-        <LoadingList count={6} trailing />
-      ) : audit.isError ? (
-        <ErrorState error={audit.error} onRetry={() => void audit.refetch()} />
-      ) : rows.length === 0 ? (
-        show === "all" && agentId === ANY ? (
-          <EmptyState size="page" agent={look} mood="deal" title={t("audit.emptyTitle")}>
-            {t("audit.empty")}
-          </EmptyState>
+      <Refreshing busy={audit.isPlaceholderData} label={t("common.loading")}>
+        {audit.isPending ? (
+          <LoadingList count={6} trailing />
+        ) : audit.isError ? (
+          <ErrorState error={audit.error} onRetry={() => void audit.refetch()} />
+        ) : rows.length === 0 ? (
+          show === "all" && agentId === ANY ? (
+            <EmptyState size="page" agent={look} mood="deal" title={t("audit.emptyTitle")}>
+              {t("audit.empty")}
+            </EmptyState>
+          ) : (
+            <EmptyState
+              size="panel"
+              actions={
+                <Button
+                  onClick={() => {
+                    setShow("all");
+                    setAgentId(ANY);
+                  }}
+                >
+                  {t("filters.clearAll")}
+                </Button>
+              }
+            >
+              {t("audit.emptyFiltered")}
+            </EmptyState>
+          )
         ) : (
-          <EmptyState
-            size="panel"
-            actions={
-              <Button
-                onClick={() => {
-                  setShow("all");
-                  setAgentId(ANY);
-                }}
-              >
-                {t("filters.clearAll")}
-              </Button>
-            }
-          >
-            {t("audit.emptyFiltered")}
-          </EmptyState>
-        )
-      ) : (
-        <div className="ac-groups">
-          {days.map(([label, list]) => (
-            <div key={label}>
-              <GroupHeading level={3} title={label} />
-              <ul className="audit__list">
-                {list.map((row) => (
-                  <li key={row.id}>
-                    <button
-                      type="button"
-                      className="audit-row"
-                      aria-pressed={row.id === openId}
-                      onClick={() => setOpenId(row.id)}
-                    >
-                      <Face row={row} />
-                      <span className="audit-row__text">
-                        <span className="audit-row__title">
-                          <Sentence row={row} />
+          <div className="ac-groups">
+            {days.map(([label, list]) => (
+              <div key={label}>
+                <GroupHeading level={3} title={label} />
+                <ul className="audit__list">
+                  {list.map((row) => (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        className="audit-row"
+                        aria-pressed={row.id === openId}
+                        onClick={() => setOpenId(row.id)}
+                      >
+                        <Face row={row} />
+                        <span className="audit-row__text">
+                          <span className="audit-row__title">
+                            <Sentence row={row} />
+                          </span>
+                          <span className="audit-row__sub">{auditSubLine(t, row, i18n.language)}</span>
                         </span>
-                        <span className="audit-row__sub">{auditSubLine(t, row)}</span>
-                      </span>
-                      <OutcomeChip row={row} />
-                      <time className="audit-row__time" dateTime={row.at}>
-                        {formatTime(i18n.language, row.at)}
-                      </time>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
+                        <OutcomeChip row={row} />
+                        <time className="audit-row__time" dateTime={row.at}>
+                          {formatTime(i18n.language, row.at)}
+                        </time>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </Refreshing>
       {audit.hasNextPage && (
         <div className="audit__more">
           <Button loading={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()}>
@@ -245,7 +250,8 @@ function AuditPanel({ row, onClose }: { row: AuditRow; onClose: () => void }) {
   const toast = useToast();
   useEscClose(onClose);
   const name = auditActorName(t, row) ?? t("audit.system");
-  const reason = auditReason(t, row);
+  const reason = auditReason(t, row, i18n.language);
+  const reasonLabel = auditReasonLabel(t, row);
   const isCall = row.action === TOOL_CALL;
   const where = auditWhere(t, row);
   const connector = auditStr(row.details.connector);
@@ -293,7 +299,7 @@ function AuditPanel({ row, onClose }: { row: AuditRow; onClose: () => void }) {
   facts.push([t("audit.panel.when"), whenAt(t, i18n.language, row.at)]);
 
   const input = isCall ? (row.details.input as Record<string, unknown> | undefined) : undefined;
-  const changeDetails = isCall ? undefined : auditDetailEntries(row.details);
+  const changeDetails = isCall ? undefined : auditDetailEntries(row.details, row.action);
   const reasonKey = auditReasonKey(row);
   const said = auditToolSaid(row);
 
@@ -307,11 +313,7 @@ function AuditPanel({ row, onClose }: { row: AuditRow; onClose: () => void }) {
           <h1 className="channel__title thread-title">
             <span className="thread-title__text">{auditHint(t, row) ?? auditPhrase(t, row, i18n.language)}</span>
           </h1>
-          <span className="channel__topic thread-head__meta">
-            <span className="thread-head__where">{name}</span>
-            <span>·</span>
-            <span>{whenAt(t, i18n.language, row.at)}</span>
-          </span>
+          <MetaLine where={name} parts={[whenAt(t, i18n.language, row.at)]} />
         </div>
         <Menu
           align="end"
@@ -344,7 +346,12 @@ function AuditPanel({ row, onClose }: { row: AuditRow; onClose: () => void }) {
           <div className={`audit-panel__reason ac-iconline audit-panel__reason--${reasonKey}`}>
             <Icon name={reasonKey === "refused" ? "block" : reasonKey === "failed" ? "alert" : "info"} size={16} />
             <span>
-              <strong>{t(`audit.panel.reason.${reasonKey}`)}:</strong> {reason}
+              {reasonLabel && (
+                <>
+                  <strong>{reasonLabel}:</strong>{" "}
+                </>
+              )}
+              {reason}
             </span>
           </div>
         )}

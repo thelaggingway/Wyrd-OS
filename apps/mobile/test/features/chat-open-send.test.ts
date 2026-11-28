@@ -2,9 +2,10 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openingDockHeight, rememberDockHeight } from "../../src/features/chat/dock-height";
+import { chatScreenSource } from "./chat-screen-source";
 
 const src = (path: string) => readFileSync(join(import.meta.dir, "../../src", path), "utf8");
-const chat = src("features/chat/ChatScreen.tsx");
+const chat = chatScreenSource();
 
 test("a conversation opens with the dock's room known before the list places its end", () => {
   // The height laid out last, or a one-line composer over the home indicator before any.
@@ -48,6 +49,6 @@ test("a message sent slides up into view in one motion and is there at once, who
   expect(chat).toMatch(
     /if \(glide === 0\) return;\s*if \(!covered\.current\) freeze\.value = true;\s*const timer = setTimeout\(\(\) => \{\s*setGlide\(0\);\s*if \(!covered\.current\) freeze\.value = false;\s*\}, GLIDE_MS\);/,
   );
-  // My own words never fade in; someone else's still rise in.
+  // My own words never fade in; someone else's still rise in, but in a file's sheet, which stays still over the file.
   expect(chat).toContain("entering={fresh && m.author.id !== meId ? ENTER : undefined}");
 });

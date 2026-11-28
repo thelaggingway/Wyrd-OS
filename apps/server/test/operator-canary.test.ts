@@ -133,6 +133,9 @@ const KEPT: Record<string, string[]> = {
   db_connections: ["label", "status", "last_error"],
   // A registered host and its look: only this API writes them, never a workspace (ADR 0194).
   hosts: ["host", "name", "accent"],
+  // A server process's own vitals: only the process writes them, from its role, its release, its snapshot's name and
+  // the patterns of its routes (as registered, ids left out).
+  server_processes: ["role", "version", "heap_snapshot_file", "routes.route"],
 };
 
 /** The places the proof is about: each holds a canary before any read, and after every column got one. */
@@ -286,6 +289,27 @@ beforeAll(async () => {
     .from(schema.agentRuns)
     .where(eq(schema.agentRuns.triggerMessageId, look));
   if (!run) throw new Error("no run for the first message");
+  // What the time per task reads beside the runs: the ask's kind as Jev read it, and the long work it stepped into.
+  await db.insert(schema.askKinds).values({ messageId: look, orgId, kind: "canary-kind words", p: 0.9 });
+  const [work] = await db
+    .insert(schema.agentWorks)
+    .values({
+      orgId,
+      agentId,
+      channelId,
+      anchorMessageId: look,
+      ownThread: true,
+      title: "canary-work title",
+      status: "live",
+      how: "agent",
+      lastUpdateAt: new Date(),
+      lastUpdateText: "canary-work update",
+    })
+    .returning({ id: schema.agentWorks.id });
+  await db
+    .update(schema.agentRuns)
+    .set({ workId: work?.id ?? null })
+    .where(eq(schema.agentRuns.id, run.id));
   // Content, read the one way the API gives it: its `content.viewed` is in the feed the reads return.
   expect((await as(TOKEN)(`/review/run/${run.id}?reason=a%20report&operator=someone`)).status).toBe(200);
 
@@ -420,6 +444,18 @@ beforeAll(async () => {
     content: "canary memory",
   });
   await db.insert(schema.hosts).values({ host: "app.northwind.example", name: "Northwind Studio", accent: "#7c3aed" });
+  await db.insert(schema.serverProcesses).values({
+    id: crypto.randomUUID(),
+    role: "all",
+    version: "test",
+    startedAt: new Date(),
+    seenAt: new Date(),
+    rssBytes: 1,
+    heapUsedBytes: 1,
+    heapTotalBytes: 1,
+    heapSnapshotAt: new Date(),
+    heapSnapshotFile: "heap-all.heapsnapshot",
+  });
   await db.insert(schema.auditLog).values({
     orgId,
     actorType: "agent",
@@ -940,6 +976,8 @@ beforeAll(async () => {
     "/openapi.json",
     "/health",
     "/activity",
+    "/vitals",
+    "/storage",
     "/orgs?limit=200",
     "/orgs?q=acme",
     "/events",
@@ -954,6 +992,12 @@ beforeAll(async () => {
     `/analytics/work?${days}`,
     ...["brain", "model"].map((by) => `/analytics/run-timings?${hours}&by=${by}`),
     `/analytics/run-timings?${hours}&orgId=${orgId}&agentId=${agentId}`,
+    ...["hour", "day"].map((bucket) => `/analytics/reply-times?${hours}&bucket=${bucket}`),
+    `/analytics/asks?${hours}&bucket=hour`,
+    `/analytics/asks?${hours}&orgId=${orgId}`,
+    `/analytics/stage-breakdown?${hours}`,
+    `/analytics/stage-breakdown?${hours}&orgId=${orgId}`,
+    `/cli-runs?${hours}`,
     `/analytics/ai-accounts?${days}`,
     "/ai-accounts?limit=200",
     "/claude-auth",
@@ -1064,6 +1108,8 @@ beforeAll(async () => {
     ["/events?after=nope", 400],
     ["/analytics", 400],
     [`/analytics/run-timings?${days}`, 400],
+    [`/analytics/reply-times?${days}`, 400],
+    [`/cli-runs?${days}`, 400],
     ["/nope", 404],
   ];
 });

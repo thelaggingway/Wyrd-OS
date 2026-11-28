@@ -4,6 +4,7 @@ import {
   iosOf,
   iphoneOverWifi,
   portraitOf,
+  powerChoice,
   reasonText,
   sameAudience,
   statusDetail,
@@ -50,9 +51,13 @@ import { AgentFace, ConnectionChip, OrgTile } from "../../ui/bits";
 import { MacPermissionCard, useMacGrants } from "../../ui/permissions";
 import { CardTitle, hintFor, PrefCard, PrefRow } from "../../ui/settings";
 import { useToast } from "../../ui/Toast";
+import { InternetRow } from "../InternetRow";
 
-/** How often the devices are asked while Preferences is open (the runner's own phone changes ask at once). */
-const POLL_MS = 5000;
+/**
+ * How often the devices are asked while Preferences shows (the runner's own phone changes ask at once): each ask is a
+ * request to each home's server, with the window's session.
+ */
+const POLL_MS = 30_000;
 
 /** The iPhone setup, in the welcome window (it reads the pref once it shows). */
 export function openIphoneSetup(host: Host) {
@@ -95,7 +100,9 @@ function useDevices(homes: readonly Home[]) {
   }, [host, key]);
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), POLL_MS);
+    const timer = setInterval(() => {
+      if (!document.hidden) void load();
+    }, POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
   // The runner saw a phone come, go or change state: its server heard it at the same moment.
@@ -174,6 +181,7 @@ export function ThisMacCards({
 
   const whoHome = homes.find((h) => h.homeId === who);
   const whoTarget = whoHome ? targets[homes.indexOf(whoHome)] : undefined;
+  const whoComputer = whoHome ? thisComputer(answers[whoHome.homeId]?.list, whoHome) : null;
   const phoneHomes = homes.flatMap((h, i) => {
     const target = targets[i];
     const computer = thisComputer(answers[h.homeId]?.list, h);
@@ -391,6 +399,14 @@ export function ThisMacCards({
                 user={user}
                 onChanged={load}
               />
+              {whoComputer && (
+                <InternetRow
+                  server={whoTarget.server}
+                  orgId={whoTarget.orgId}
+                  computer={whoComputer}
+                  onChanged={load}
+                />
+              )}
             </PrefCard>
           </DialogBody>
         </Dialog>
@@ -817,6 +833,20 @@ function PhoneRow({
     }
   };
 
+  const powers = powerChoice(phone);
+  const power = async (on: boolean) => {
+    setStopping(true);
+    try {
+      await siteApi(host, server).devices.powerPhone(orgId, phone.id, on);
+      toast(t(on ? "devices.power.starting" : "devices.power.stopped", { name: phone.name }));
+      await onChanged();
+    } catch (err) {
+      toast(errorText(t, err, i18n.language), "alert");
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const stop = async () => {
     setStopping(true);
     try {
@@ -849,6 +879,15 @@ function PhoneRow({
         s.kind === "in_use" ? (
           <Button size="sm" icon="stop" loading={stopping} onClick={() => void stop()}>
             {t("devices.stop")}
+          </Button>
+        ) : powers ? (
+          <Button
+            size="sm"
+            icon={powers === "start" ? "play" : "power"}
+            loading={stopping}
+            onClick={() => void power(powers === "start")}
+          >
+            {t(powers === "start" ? "devices.power.start" : "devices.power.stop")}
           </Button>
         ) : howTo ? (
           <Button

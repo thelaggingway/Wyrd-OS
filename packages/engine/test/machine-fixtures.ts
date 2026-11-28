@@ -4,6 +4,7 @@ import {
   MACHINE_PROTOCOL_VERSION,
   type MachineReplies,
   type MachineRequest,
+  type OsPermission,
   openSecret,
   type PubSub,
   type SecretRequest,
@@ -103,7 +104,7 @@ export interface FakeRunnerOptions {
     req: Extract<Request, { op: "exec" }>,
     out: (stream: "stdout" | "stderr", chunk: string) => void,
   ) =>
-    | { exitCode: number; stdout: string; stderr: string; timedOut?: boolean }
+    | { exitCode: number; stdout: string; stderr: string; timedOut?: boolean; permission?: OsPermission }
     | "hang"
     /** The runner refuses it (`approval_needed`: its command policy held it). */
     | { fail: { code: string; message: string } };
@@ -115,6 +116,8 @@ export interface FakeRunnerOptions {
   execAllowed?: boolean;
   /** A socket whose close never reaches the hub (a runner killed behind a proxy: half-open). */
   dead?: boolean;
+  /** Answers each `ping` with a `pong` (on a later tick). */
+  pong?: boolean;
   /** Pause a staged secret before answering, for delivery/decline races. */
   onSecretStaged?: (requestId: string) => Promise<void>;
   /** Pause activation before checking the current value, for replacement races. */
@@ -277,6 +280,7 @@ export function fakeRunner(hub: MachineHub, options: FakeRunnerOptions = {}) {
       const frame = JSON.parse(text) as ServerFrame;
       sent.push(frame);
       if (frame.type === "request") setTimeout(() => void handle(frame), 1);
+      if (frame.type === "ping" && options.pong) setTimeout(() => void reply({ type: "pong", at: frame.at }), 1);
       if (frame.type === "cancel") {
         setTimeout(
           () =>

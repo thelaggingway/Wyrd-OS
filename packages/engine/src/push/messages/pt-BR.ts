@@ -87,11 +87,13 @@ export const ptBR: PushStrings = {
   deviceFolderTitle: (a, f, d) => (f ? `${a} pede ${f} no seu ${d}` : `${a} pede uma pasta no seu ${d}`),
   deviceFolderBody: "Libere no app do computador.",
   adminAskTitle: (a, what, l) =>
-    what === "channel_agent"
-      ? `${a} pede para adicionar um agente a #${l}`
-      : what === "create_agents"
-        ? `${a} pede para poder criar agentes`
-        : `${a} pede para ligar o webhook do ${l} para rotinas`,
+    what === "voice"
+      ? `${a} pede para ligar as mensagens de voz`
+      : what === "channel_agent"
+        ? `${a} pede para adicionar um agente a #${l}`
+        : what === "create_agents"
+          ? `${a} pede para poder criar agentes`
+          : `${a} pede para ligar o webhook do ${l} para rotinas`,
   deviceWaitingTitle: (p, d) => `O agente de ${p} está esperando seu ${d}`,
   deviceWaitingBody: "Começa quando ele voltar.",
   teamWeekReady: "Sua semana da equipe está pronta",
@@ -104,4 +106,17 @@ export const ptBR: PushStrings = {
   joinSuggestionTitlePersonal: (by, name) => `${by} sugeriu convidar ${name}`,
   teamWeekReadyPersonal: "Sua semana está pronta",
   teamWatchStill: (n) => (n === 1 ? "1 coisa ainda espera você" : `${n} coisas ainda esperam você`),
+  liveActivityApproval: (a) => `${a} pede aprovação`,
+  liveActivityQuestion: (a) => `${a} tem uma pergunta`,
+  liveActivitySecret: (a) => `${a} pede um segredo`,
+  liveActivityApprovalShort: "Aprovar?",
+  liveActivityQuestionShort: "Responder?",
+  liveActivitySecretShort: "Enviar?",
+  liveActivityApprovalStep: "Esperando sua aprovação",
+  liveActivityQuestionStep: "Esperando sua resposta",
+  liveActivitySecretStep: "Esperando um segredo seu",
+  liveActivityWorking: (n) => `${n} trabalhando`,
+  liveActivityWorkingStep: "Trabalhando",
+  liveActivityQueuedStep: "Na fila",
+  liveActivityDone: "Pronto",
 };

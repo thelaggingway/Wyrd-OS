@@ -36,6 +36,7 @@ import { replyExcerpt } from "./messages";
 import { isQuietNotice } from "./notices";
 import { can, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
+import { rightHandId } from "./right-hand";
 import { isRoutineRoomKey } from "./routine-brief";
 import { openOrg } from "./standing";
 import { adminChannelSql, fileSeenSql, fileSharedSql, taskSeenSql } from "./task-access";
@@ -441,6 +442,9 @@ async function fileSearchScopes(db: Database, orgId: string, userId: string) {
 
 export type QueryEmbedding = Awaited<ReturnType<ModelGateway["embed"]>>;
 
+/** A run's memory and wiki search the first this many characters of its trigger. */
+export const RUN_QUERY_CHARS = 500;
+
 /**
  * One query embedding for several searches of the same words (a run's memory and its wiki both search the trigger
  * message): asked by the first search that needs it, for every kind they search, then shared.
@@ -590,7 +594,7 @@ export async function searchForUser(
   // Memory is indexed by channel only: the same rule as `listContextItems` for an agent's and a person's items.
   const items = hits.filter((h) => h.kind === "context_item").map((h) => h.sourceId);
   if (items.length > 0) {
-    const [rows, agentsSeen] = await Promise.all([
+    const [rows, agentsSeen, rightHand] = await Promise.all([
       deps.db
         .select({
           id: contextItems.id,
@@ -603,6 +607,7 @@ export async function searchForUser(
         .from(contextItems)
         .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, items))),
       agentIdsSeen(deps.db, userId, orgId),
+      rightHandId(deps.db, orgId),
     ]);
     const reviews = can(membership, "review_memory");
     const shown = new Set(
@@ -611,7 +616,8 @@ export async function searchForUser(
           (r) =>
             (!r.agentId || agentsSeen.details.has(r.agentId)) &&
             (!isPlaybook(r) || agentsSeen.playbook.has(r.agentId ?? "")) &&
-            (reviews || r.scopeType !== "person" || r.scopeId === userId),
+            // What the right hand keeps for one person is theirs alone, reviewers included (ADR 0137).
+            (r.scopeType !== "person" || r.scopeId === userId || (reviews && r.agentId !== rightHand)),
         )
         .map((r) => r.id),
     );

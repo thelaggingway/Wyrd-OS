@@ -41,6 +41,8 @@ export function storedStrings(key: string): string[] {
 
 export const STORAGE_KEYS = {
   theme: "agentes.theme",
+  /** JSON list of user ids: who has seen the microphone's first-press dialog where voice doesn't become text yet. */
+  voiceSetupSeen: "agentes.voiceSetupSeen",
   lastOrg: "agentes.lastOrg",
   /** The last page shown in each workspace (JSON, by workspace id): where "Onde você parou" opens (ADR 0108). */
   lastPlace: "agentes.lastPlace",
@@ -67,6 +69,8 @@ export const STORAGE_KEYS = {
   thisMacReturn: "agentes.thisMac.return",
   /** "0" when the person switched off the picture viewer's hover lens (on by default). */
   imageLens: "agentes.image.lens",
+  /** A press on a file with its comments open marks it ("0" = it moves the file instead). */
+  fileMarking: "agentes.file.marking",
   /** The Drive's view: "grid" (default) or "list". */
   driveView: "agentes.drive.view",
   /** Equipe's view (ADR 0148): "list" (default), "chart", "map", "sectors" or "usage". */
@@ -95,6 +99,12 @@ export const STORAGE_KEYS = {
   noAiOpened: "agentes.noAi.opened",
   /** Prefix (`.<orgId>`, in `sessionStore`): this tab came back from paying and the hold hasn't lifted yet. */
   paidReturn: "agentes.billing.paid",
+  /** Prefix (`.<orgId>`, in `sessionStore`): a paid return whose moment hasn't shown yet (`PaidReturn`, JSON). */
+  paidMoment: "agentes.billing.moment",
+  /** Prefix (`.<orgId>`, in `storage`): when this browser last showed that workspace's paid moment (ms). */
+  paidMomentShown: "agentes.billing.momentShown",
+  /** Prefix (`.<orgId>`, in `sessionStore`): what this tab last came back from buying there (`PaidReturn`, JSON). */
+  paidPlan: "agentes.billing.bought",
   /** Prefix (`.<orgId>`, in `sessionStore`): the agents the onboarding imported there, with their models (JSON). */
   onboardingImports: "agentes.onboarding.imports",
   /**
@@ -148,4 +158,10 @@ export const STORAGE_KEYS = {
 export const rightHandSeen = seenList(
   () => storage.get(STORAGE_KEYS.rightHandSeen),
   (value) => storage.set(STORAGE_KEYS.rightHandSeen, value),
+);
+
+/** Who has seen the microphone's first-press dialog where voice doesn't become text yet (`useVoiceSetup`), by user id. */
+export const voiceSetupSeen = seenList(
+  () => storage.get(STORAGE_KEYS.voiceSetupSeen),
+  (value) => storage.set(STORAGE_KEYS.voiceSetupSeen, value),
 );

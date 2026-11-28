@@ -1,12 +1,13 @@
 import { AGENT_FOLDERS_PROTOCOL, type PubSub, type SandboxProvider } from "@agenteschat/adapters";
 import { type Database, eq, schema } from "@agenteschat/db";
 import { getAgent, getAgentCached } from "./agents";
-import { managesAgent } from "./audience";
+import { managesAgent, ownsAgent } from "./audience";
 import { recordAudit } from "./audit";
 import type { WorkspaceComputer } from "./context";
 import { checkDeviceUse, noteDeviceInUse, pickDevice, seenAgo, waitHint, workspaceDevices } from "./device-resolve";
 import { ForbiddenError, NotFoundError } from "./errors";
 import { cutText, cutTextEnd } from "./format";
+import { codeCommitAuthor } from "./git/person-account";
 import { computerBackSoon, type MachineCaller } from "./machine-hub";
 import { createMachineSandboxProvider } from "./machine-provider";
 import { computerPreparing } from "./machine-provisioning";
@@ -16,6 +17,7 @@ import {
   MachineOfflineError,
   MachinePausedError,
   REMOVED_COMPUTER_MESSAGE,
+  type ShownMaintenance,
 } from "./machines";
 import { missionOfRun } from "./mission-context";
 import { requirePermission } from "./organizations";
@@ -23,6 +25,7 @@ import { isRightHand } from "./right-hand";
 import { machineScope, NO_HOME_MESSAGE, type ScopeContext, toolMachineId } from "./right-hand-seats";
 import { runnerUpdateWay } from "./runner-update";
 import { SANDBOX_SCOPE } from "./sandbox-scope";
+import { grantedScopeKeys, isAllowed, toolAccess } from "./tools/scopes";
 import type { ToolContext } from "./tools/types";
 
 const { orgSandboxSettings } = schema;
@@ -108,6 +111,26 @@ export async function getSandboxSettings(db: Database, orgId: string): Promise<S
   return { enabled: row.enabled, execTimeoutSeconds: row.execTimeoutSeconds, requireApproval: row.requireApproval };
 }
 
+/** `run_code` as the gateway checks it: what running commands on a computer takes. */
+export const RUN_CODE_TOOL = { name: "run_code", scope: SANDBOX_SCOPE } as const;
+
+/**
+ * Whether the agent may run commands on a computer: its grants allow `run_code` (`toolAccess`: a denial wins, then
+ * the tool, then `sandbox:run`) and the workspace's code environment is on. The agent's desktop needs it, and so does
+ * an agent that thinks through the API to work in a code session. `refused` says which of the two is missing.
+ */
+export async function codeRunning(
+  db: Database,
+  orgId: string,
+  agentId: string,
+  granted?: Set<string>,
+): Promise<{ refused: "grant" | "off" } | { refused: null; approvals: boolean }> {
+  const keys = granted ?? (await grantedScopeKeys(db, orgId, agentId));
+  if (!isAllowed(toolAccess(keys, RUN_CODE_TOOL))) return { refused: "grant" };
+  const settings = await getSandboxSettings(db, orgId);
+  return settings.enabled ? { refused: null, approvals: settings.requireApproval } : { refused: "off" };
+}
+
 /**
  * Org settings (admins, `configure`). The default timeout is clamped between 5 s and
  * `SANDBOX_LIMITS.maxTimeoutSeconds`.
@@ -176,7 +199,10 @@ export async function withSandbox<T>(
       options,
     );
   }
-  const machineId = await toolMachineId(deps.db, agent);
+  // In a code session (ADR 0215) the work runs on the session's computer, where its worktree is; with no worktree
+  // there for its own agent, nothing runs in the agent's own folder instead.
+  if (ctx.codeSession?.unavailable) throw new SandboxUnavailableError(ctx.codeSession.unavailable);
+  const machineId = ctx.codeSession?.place?.machineId ?? (await toolMachineId(deps.db, agent));
   if (agent && machineId) {
     return withMachine(deps, ctx, { machineId, handle: agent.handle, name: agent.name }, fn, options);
   }
@@ -281,7 +307,7 @@ export async function withConnectedMachine<T>(
   if (!status || status.orgId !== ctx.orgId) {
     throw new SandboxUnavailableError(REMOVED_COMPUTER_MESSAGE);
   }
-  if (!status.online) throw new MachineOfflineError(status.name, status.kind);
+  if (!status.online) throw new MachineOfflineError(status.name, status.kind, status.maintenance);
   // Paused by its owner (ADR 0036 §6): nothing new starts there; the agent relays why and until when.
   if (status.paused && !options.allowPaused)
     throw new MachinePausedError(status.name, status.paused.until, status.paused.timezone);
@@ -292,7 +318,11 @@ export async function withConnectedMachine<T>(
     );
   }
   // The right hand's requests go to the seat its run works in (a person's own, the shared one), or nowhere (ADR 0175).
-  const provider = createMachineSandboxProvider(hub, await machineScope(hub, ctx, machineId), device);
+  const scope = await machineScope(hub, ctx, machineId);
+  // In a code session the commands' commits are authored as the person who asked, by their own GitHub account
+  // (ADR 0215 §13).
+  const author = await codeCommitAuthor(ctx.db, ctx.orgId, ctx.runId).catch(() => null);
+  const provider = createMachineSandboxProvider(hub, author ? { ...scope, author } : scope, device);
   return fn({ id: machineId, provider, ref: `machine:${machineId}`, machineId });
 }
 
@@ -323,6 +353,8 @@ export async function agentComputerInfo(
       paused: { until: string | null; timezone: string | null } | null;
       /** The folders the machine allows this agent beyond its own folder (protocol 10; empty when none or unknown). */
       folders: string[];
+      /** What we do to the workspace's own computer now (`shownMaintenance`). */
+      maintenance: ShownMaintenance | null;
     }
   | { kind: "removed" }
 > {
@@ -344,6 +376,7 @@ export async function agentComputerInfo(
     protocol: status.protocol,
     paused: status.paused ?? null,
     folders: status.access ? status.access.folders.filter((f) => f.agents.includes(agentId)).map((f) => f.path) : [],
+    maintenance: status.maintenance ?? null,
   };
 }
 
@@ -357,7 +390,7 @@ export async function requireComputerManager(db: Database, actorId: string, orgI
   const membership = await requirePermission(db, actorId, orgId, "read");
   const agent = await getAgent(db, orgId, agentId);
   if (!agent || agent.archivedAt) throw new NotFoundError("Agent not found");
-  if (!managesAgent(agent, actorId, membership) && agent.ownerUserId !== actorId) {
+  if (!managesAgent(agent, actorId, membership) && !ownsAgent(agent, actorId, membership.roleIds)) {
     throw new ForbiddenError("Only an admin or the agent's owner can manage its computer");
   }
 }

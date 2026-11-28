@@ -219,21 +219,29 @@ export function SkeletonList({
 }
 
 /**
- * A thin indeterminate bar at the top of a region: cached data is on screen
- * and a refresh is running. Waits `delayMs` like skeletons.
+ * A list kept on screen while its next tab or filter loads (`busy`: the query's `isPlaceholderData`): after 150 ms what
+ * it held dims and a bar runs along its top, so the switch answers at once and nothing moves when the rows land. Every
+ * tabbed or filtered list loads this way; its first load is a skeleton of its rows.
  */
-export function TopProgress({
-  active,
+export function Refreshing({
+  busy,
   label,
-  delayMs = SKELETON_DELAY_MS,
+  className,
+  children,
 }: {
-  active: boolean;
+  busy: boolean;
+  /** Read out while it loads ("Carregando…"). */
   label: string;
-  delayMs?: number;
+  className?: string;
+  children: ReactNode;
 }) {
-  const shown = useDelayed(active, delayMs);
-  if (!shown) return null;
-  return <div className="ac-top-progress" role="progressbar" aria-label={label} aria-busy="true" />;
+  const shown = useDelayed(busy);
+  return (
+    <div className={cx("ac-refreshing", className)} aria-busy={busy || undefined} data-busy={shown || undefined}>
+      {shown && <span className="ac-refreshing__bar" role="progressbar" aria-label={label} />}
+      {children}
+    </div>
+  );
 }
 
 /**

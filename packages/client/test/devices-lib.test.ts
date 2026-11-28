@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resources } from "@agenteschat/i18n";
 import i18next, { type TFunction } from "i18next";
+import { ApiError } from "../src/api/http";
 import type { ComputerDevice, DeviceAudience, PhoneDevice } from "../src/api/types";
 import {
   ANDROID_USB_DRIVERS,
@@ -16,6 +17,7 @@ import {
   deviceWaitOf,
   failedOnLocalNetwork,
   fixText,
+  helpingDevices,
   IPHONE_RESTART_MS,
   type IphoneRestartMemo,
   type IphoneSeen,
@@ -24,19 +26,31 @@ import {
   iphoneRestartNext,
   iphoneRestartOf,
   iphoneSteps,
+  lendingDevice,
   linkPhase,
+  mayChangeTasks,
   mayTakePhone,
   NO_IPHONE_RESTART,
   narrowsAudience,
   newComputerOf,
+  permissionWaitLines,
   phoneCloseState,
   phoneScreenCover,
   phoneScreenUrl,
+  powerChoice,
   reasonText,
+  SPILL_USES,
   screenGesture,
+  shareInternetText,
+  spilledText,
+  spillOfUse,
+  spillUseOf,
   statusDetail,
   statusPill,
   statusSentence,
+  taskChoices,
+  taskLimitLine,
+  tasksAutoText,
   waitEndedText,
   waitText,
   wifiHosts,
@@ -47,6 +61,7 @@ import {
   xcodeFixLive,
   xcodeFixStage,
 } from "../src/lib/devices";
+import { errorText } from "../src/lib/errors";
 
 const i18n = i18next.createInstance();
 void i18n.init({ lng: "en", fallbackLng: "en", resources, initAsync: false, interpolation: { escapeValue: false } });
@@ -85,7 +100,7 @@ const computer = (c: Partial<ComputerDevice>): ComputerDevice => ({
   memoryGb: 36,
   ownerUserId: "u-sam",
   belongsToWorkspace: false,
-  spill: { own: true, others: false },
+  spill: { own: true },
   systemMode: false,
   audience: owner,
   status: { kind: "ready" },
@@ -96,6 +111,89 @@ const computer = (c: Partial<ComputerDevice>): ComputerDevice => ({
   mayManage: true,
   phones: [],
   ...c,
+});
+
+describe("devices as extra capacity", () => {
+  test("the line under a reply that thought elsewhere says where and why; any other reply has none", () => {
+    const org = { name: "Acme", mode: "team" as const };
+    expect(spilledText(t, { spilled: { to: "Bruno's MacBook", from: "Studio Mac", cause: "full" } }, org)).toBe(
+      "Thought on Bruno's MacBook: Studio Mac was full.",
+    );
+    // The workspace's own computer, named in its first owner's language, reads in the reader's.
+    expect(spilledText(t, { spilled: { to: "Bruno's MacBook", from: "Computador da Acme", cause: "full" } }, org)).toBe(
+      `Thought on Bruno's MacBook: ${t("computerSetup.title", { org: "Acme" })} was full.`,
+    );
+    expect(spilledText(t, { spilled: { to: "Bruno's MacBook", from: null, cause: "away" } }, org)).toBe(
+      "Thought on Bruno's MacBook: its computer was away.",
+    );
+    expect(spilledText(t, { speedFallback: true }, org)).toBeNull();
+    // Its owner uses that computer for their agents' work: nothing was wrong with the agent's own.
+    expect(spilledText(t, { spilled: { to: "Bruno's PC", from: "Studio Mac", cause: "chosen" } }, org)).toBe(
+      "Thought on Bruno's PC, which its owner uses for their agents' work.",
+    );
+  });
+
+  test("how a computer helps its owner's agents: never, when theirs is full or away, or first for their work", () => {
+    expect(spillUseOf({ spill: { own: false } })).toBe("off");
+    expect(spillUseOf({ spill: { own: true } })).toBe("help");
+    expect(spillUseOf({ spill: { own: true, first: true } })).toBe("first");
+    expect(SPILL_USES.map(spillOfUse)).toEqual([
+      { own: false, first: false },
+      { own: true, first: false },
+      { own: true, first: true },
+    ]);
+  });
+
+  test("the computers that help an agent: online, its owner's own or the workspace's, while the workspace lets them", () => {
+    const mine = computer({ id: "mine", ownerUserId: "u-ana" });
+    const theirs = computer({ id: "theirs", ownerUserId: "u-sam" });
+    const team = computer({ id: "team", ownerUserId: "u-sam", belongsToWorkspace: true });
+    const off = computer({ id: "off", ownerUserId: "u-ana", spill: { own: false } });
+    const away = computer({ id: "away", ownerUserId: "u-ana", status: { kind: "offline", lastSeenAt: null } });
+    const devices = [mine, theirs, team, off, away];
+    expect(helpingDevices({ devices }, "u-ana", "home").map((d) => d.id)).toEqual(["mine", "team"]);
+    expect(helpingDevices({ devices }, "u-ana", "mine").map((d) => d.id)).toEqual(["team"]);
+    expect(helpingDevices({ devices, devicesHelp: false }, "u-ana", "home")).toEqual([]);
+  });
+});
+
+describe("tasks at once", () => {
+  test("where tasks start on room: no count in the pill, what still fits in the row, why none does under the pill", () => {
+    const room = { more: 8, freeGb: 6.4, cpuBusy: false, pushHarder: false };
+    const busy = computer({ status: { kind: "busy", running: 3, max: null }, maxTasks: 5, taskRoom: room });
+    expect(statusPill(t, busy.status)).toBe("Busy · 3 running");
+    expect(tasksAutoText(t, busy)).toBe("Automatic · 3 running · room for about 8 more");
+    expect(taskLimitLine(t, busy, true)).toBeNull();
+    const full = { ...busy, taskRoom: { ...room, more: 0, freeGb: 1.4 } };
+    expect(tasksAutoText(t, full)).toBe("Automatic · 3 running · full for now");
+    expect(taskLimitLine(t, full, true)).toBe(
+      "No room for another task right now: 1.4 GB of memory free. The next one starts when one ends.",
+    );
+    expect(taskLimitLine(t, { ...full, taskRoom: { ...full.taskRoom, cpuBusy: true } }, true)).toContain(
+      "the processor is nearly full",
+    );
+    expect(taskLimitLine(t, { ...full, taskRoom: { ...full.taskRoom, freeGb: 0.6, pushHarder: true } }, false)).toBe(
+      "Pushing harder: 0.6 GB of memory free. Your own apps may slow down.",
+    );
+    expect(tasksAutoText(t, computer({ taskRoom: room }))).toBe("Automatic · 0 running · room for about 8 more");
+    expect(tasksAutoText(t, computer({}))).toBeNull();
+  });
+
+  test("a busy computer says its limit and where it changes; its owner changes it, an admin only on nobody's", () => {
+    const busy = computer({ status: { kind: "busy", running: 5, max: 5 }, maxTasks: 5 });
+    expect(taskLimitLine(t, busy, true)).toBe("Tasks at once here: 5. Change it below.");
+    expect(taskLimitLine(t, busy, false)).toBe("Tasks at once here: 5. The person who connected it can change that.");
+    expect(taskLimitLine(t, { ...busy, maxTasks: null, status: { kind: "busy", running: 3, max: 3 } }, true)).toBe(
+      "Tasks at once here: 3. Update its app to change that from here.",
+    );
+    expect(taskLimitLine(t, computer({}), true)).toBeNull();
+    expect(mayChangeTasks(busy, "u-sam", false)).toBe(true);
+    expect(mayChangeTasks(busy, "u-ana", true)).toBe(false);
+    expect(mayChangeTasks({ ...busy, ownerUserId: null }, "u-ana", true)).toBe(true);
+    expect(mayChangeTasks({ ...busy, machineKind: "managed", ownerUserId: null }, "u-ana", true)).toBe(false);
+    expect(taskChoices(7)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20]);
+    expect(taskChoices(4)).toHaveLength(11);
+  });
 });
 
 describe("status words", () => {
@@ -585,6 +683,14 @@ describe("in the chat and the inbox", () => {
       askerId: "u-caio",
       agentId: null,
     });
+    // A computer paired before lends its internet now: the computer's name is never read as a person's.
+    expect(
+      deviceNoticeOf({
+        kind: "device.internet_shared",
+        source: { machineId: "m1", label: "Bia's Mac" },
+        latest: { title: "Bia's Mac" },
+      } as never),
+    ).toMatchObject({ kind: "device.internet_shared", machineId: "m1", device: "Bia's Mac", forName: null });
     // An agent waits for a folder: the folder in `latest.title` (never read as a person's name), the computer and the
     // agent in it.
     const folder = {
@@ -696,4 +802,61 @@ describe("a phone's screen", () => {
     // Off the picture's edge: kept on it.
     expect(screenGesture({ x: 0.5, y: 0.5, at: 0 }, { x: 1.4, y: -0.2, at: 200 })).toMatchObject({ x2: 1, y2: 0 });
   });
+});
+
+describe("agents use a person's computer's internet (ADR 0237)", () => {
+  test("in use now, or which computer the agents use instead; nothing while off or with nothing to lend to", () => {
+    const mine = computer({ id: "m-mine", shareInternet: { on: true, inUse: false } });
+    const ana = computer({ id: "m-ana", name: "Ana's iMac", shareInternet: { on: true, inUse: true } });
+    const lending = lendingDevice([mine, ana]);
+    expect(lending?.id).toBe("m-ana");
+    expect(shareInternetText(t, ana, lending)).toBe("In use now");
+    expect(shareInternetText(t, mine, lending)).toBe("Agents use Ana's iMac now");
+    expect(shareInternetText(t, computer({ shareInternet: { on: false, inUse: false } }), lending)).toBeNull();
+    expect(shareInternetText(t, computer({ shareInternet: null }), lending)).toBeNull();
+    expect(lendingDevice([mine])).toBeNull();
+  });
+});
+
+test("a computer's wait for an OS permission: what and where, the one way on, and who asked it for what", () => {
+  const disk = { permission: "disk", trigger: "ls ~/Desktop", since: "2026-11-26T18:00:00.000Z" } as const;
+  expect(permissionWaitLines(t, disk, "Sam's MacBook Pro", "Lia")).toEqual({
+    title: "Waiting for Full Disk Access on Sam's MacBook Pro",
+    next: "Allow it in the agentes.chat app there.",
+    asked: "Asked by Lia to run ls ~/Desktop",
+  });
+  expect(permissionWaitLines(t, { ...disk, trigger: "" }, "Mac").asked).toBeNull();
+  expect(permissionWaitLines(t, disk, "Mac").asked).toBe("Needed to run ls ~/Desktop");
+  const pt = i18n.cloneInstance({ lng: "pt-BR" }).t as TFunction;
+  expect(permissionWaitLines(pt, { ...disk, permission: "screen" }, "iMac").title).toBe(
+    "Aguardando Gravação de Tela em iMac",
+  );
+});
+
+test("Ligar on an offline simulator, Desligar on one running and free; never a real phone, its Mac away, or held", () => {
+  const sim = (p: Partial<PhoneDevice>) => phone({ platform: "ios", phoneKind: "simulator", ...p });
+  const off = { kind: "offline", lastSeenAt: null } as const;
+  expect(powerChoice(sim({ status: off }))).toBe("start");
+  expect(powerChoice(phone({ phoneKind: "emulator", status: off }))).toBe("start");
+  expect(powerChoice(sim({ status: { kind: "ready" } }))).toBe("stop");
+  expect(powerChoice(sim({ status: { kind: "preparing", reason: "booting" } }))).toBe("stop");
+  expect(powerChoice(phone({ status: off }))).toBeNull();
+  expect(powerChoice(sim({ status: { ...off, withHost: true } }))).toBeNull();
+  expect(
+    powerChoice(
+      sim({ status: { kind: "in_use", agentId: "a", agentName: "Lia", userId: null, userName: null, since: "" } }),
+    ),
+  ).toBeNull();
+  expect(powerChoice(sim({ status: off, mayUse: false, mayManage: false }))).toBeNull();
+  // The Mac's refusals in words: Xcode or the emulator missing, by platform; what it said when it failed.
+  const said = (code: string, params: Record<string, unknown>) => errorText(t, new ApiError(409, code, "", params));
+  expect(said("device.power_tool_missing", { platform: "ios", computer: "MacBook" })).toBe(
+    "MacBook needs Xcode to run simulators. Install Xcode from the App Store on that Mac.",
+  );
+  expect(said("device.power_tool_missing", { platform: "android", computer: "Build PC" })).toStartWith(
+    "Build PC doesn't have the Android Emulator.",
+  );
+  expect(said("device.power_start_failed", { name: "Pixel 8", computer: "Build PC", why: "PANIC: no image" })).toBe(
+    "Pixel 8 didn't start. Build PC said: PANIC: no image",
+  );
 });

@@ -55,6 +55,7 @@ import {
   MenuItem,
   MenuSeparator,
   PageHeader,
+  Refreshing,
   SearchField,
   Toolbar,
   WorkSweep,
@@ -354,73 +355,75 @@ export function IssuesPage() {
               <LoadingList count={5} avatar={false} trailing />
             ))}
           {issues.isError && !issues.data && <ErrorState error={issues.error} onRetry={() => void issues.refetch()} />}
-          {noIssues && (
-            <EmptyState
-              size="page"
-              agent={look}
-              title={t(posts ? "issues.emptyTitle" : "issues.emptyViewerTitle")}
-              actions={
-                posts && (
-                  <>
+          <Refreshing busy={issues.isPlaceholderData} label={t("common.loading")}>
+            {noIssues && (
+              <EmptyState
+                size="page"
+                agent={look}
+                title={t(posts ? "issues.emptyTitle" : "issues.emptyViewerTitle")}
+                actions={
+                  posts && (
+                    <>
+                      <Button variant="primary" icon="plus" onClick={() => setCreating({ columnId: null })}>
+                        {t("issues.new")}
+                      </Button>
+                      <AskAgentButton draft={t("issues.askFirst")} />
+                    </>
+                  )
+                }
+              >
+                {t(posts ? "issues.empty" : "issues.emptyViewer")}
+              </EmptyState>
+            )}
+            {emptyProject && (
+              <EmptyState
+                size="panel"
+                actions={
+                  adds &&
+                  presetProject && (
                     <Button variant="primary" icon="plus" onClick={() => setCreating({ columnId: null })}>
                       {t("issues.new")}
                     </Button>
-                    <AskAgentButton draft={t("issues.askFirst")} />
-                  </>
-                )
-              }
-            >
-              {t(posts ? "issues.empty" : "issues.emptyViewer")}
-            </EmptyState>
-          )}
-          {emptyProject && (
-            <EmptyState
-              size="panel"
-              actions={
-                adds &&
-                presetProject && (
-                  <Button variant="primary" icon="plus" onClick={() => setCreating({ columnId: null })}>
-                    {t("issues.new")}
+                  )
+                }
+              >
+                {t(projectParam === NO_PROJECT ? "issues.noResults" : "issues.projects.empty")}
+              </EmptyState>
+            )}
+            {issues.isSuccess && filtered.length === 0 && (all.length > 0 || search) && (
+              <EmptyState
+                size="panel"
+                actions={
+                  <Button
+                    onClick={() => {
+                      setQ("");
+                      changeView({ assignees: [], priorities: [], labels: [], done: "all" });
+                    }}
+                  >
+                    {copy.clearAll}
                   </Button>
-                )
-              }
-            >
-              {t(projectParam === NO_PROJECT ? "issues.noResults" : "issues.projects.empty")}
-            </EmptyState>
-          )}
-          {issues.isSuccess && filtered.length === 0 && (all.length > 0 || search) && (
-            <EmptyState
-              size="panel"
-              actions={
-                <Button
-                  onClick={() => {
-                    setQ("");
-                    changeView({ assignees: [], priorities: [], labels: [], done: "all" });
-                  }}
-                >
-                  {copy.clearAll}
-                </Button>
-              }
-            >
-              {t("issues.noResults")}
-            </EmptyState>
-          )}
-          {columnsQuery.isError && !columns && (
-            <ErrorState error={columnsQuery.error} onRetry={() => void columnsQuery.refetch()} />
-          )}
-          {!viewLoading && filtered.length > 0 && columns && (
-            <IssuesBody
-              // A project's own board doesn't say its name again on every card.
-              view={projectParam ? { ...view, fields: { ...view.fields, project: false } } : view}
-              columns={columns}
-              issues={filtered}
-              all={all}
-              onChange={changeView}
-              openNumber={openNumber}
-              onOpen={toggle}
-              onNew={adds ? (columnId) => setCreating({ columnId }) : undefined}
-            />
-          )}
+                }
+              >
+                {t("issues.noResults")}
+              </EmptyState>
+            )}
+            {columnsQuery.isError && !columns && (
+              <ErrorState error={columnsQuery.error} onRetry={() => void columnsQuery.refetch()} />
+            )}
+            {!viewLoading && filtered.length > 0 && columns && (
+              <IssuesBody
+                // A project's own board doesn't say its name again on every card.
+                view={projectParam ? { ...view, fields: { ...view.fields, project: false } } : view}
+                columns={columns}
+                issues={filtered}
+                all={all}
+                onChange={changeView}
+                openNumber={openNumber}
+                onOpen={toggle}
+                onNew={adds ? (columnId) => setCreating({ columnId }) : undefined}
+              />
+            )}
+          </Refreshing>
         </div>
         {opened && (
           <IssueDialog issue={opened} focusMessageId={focusParam ?? undefined} onClose={() => setOpenParam(null)} />
@@ -745,6 +748,12 @@ function useResumeStalled() {
     mutationFn: async (list: Issue[]) => {
       const ids = list.map((i) => i.id);
       mark(ids, true);
+      // Asked at once; the ones the server refused go back to asking.
+      setAsked((prev) => {
+        const next = new Map(prev);
+        for (const i of list) if (i.work) next.set(i.id, i.work.since);
+        return next;
+      });
       const results = await Promise.allSettled(
         list.map((i) => api.issues.askAgent(org.id, i.id, i.work?.agentId ?? "")),
       );
@@ -753,7 +762,7 @@ function useResumeStalled() {
         const next = new Map(prev);
         for (const [k, r] of results.entries()) {
           const i = list[k];
-          if (r.status === "fulfilled" && i?.work) next.set(i.id, i.work.since);
+          if (r.status === "rejected" && i?.work && next.get(i.id) === i.work.since) next.delete(i.id);
         }
         return next;
       });

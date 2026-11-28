@@ -12,6 +12,7 @@ import {
   iphoneOverWifi,
   joinFacts,
   phoneLine,
+  powerChoice,
   statusDetail,
 } from "@agenteschat/client/lib/devices";
 import { errorText } from "@agenteschat/client/lib/errors";
@@ -19,6 +20,7 @@ import { computerKind } from "@agenteschat/client/lib/machines";
 import { can } from "@agenteschat/client/lib/permissions";
 import {
   Button,
+  Card,
   ComputerPortrait,
   EmptyState,
   List,
@@ -27,6 +29,8 @@ import {
   MenuSeparator,
   SearchField,
   Segmented,
+  Switch,
+  Tip,
   Toolbar,
 } from "@agenteschat/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -36,6 +40,8 @@ import { AgentComputersCard } from "@/components/AgentComputer";
 import { HelpLink } from "@/components/HelpLink";
 import { ErrorState, LoadingList } from "@/components/Loading";
 import { HostComputerCard } from "@/components/Machines";
+import { MaintenanceHint } from "@/components/machine-bits";
+import { PrefRow } from "@/components/NoticePrefs";
 import { useOrg } from "@/components/org-context";
 import { useComputerEdition, WorkspaceComputerCard } from "@/components/WorkspaceComputer";
 import { useToast } from "@/lib/toast";
@@ -46,7 +52,9 @@ import {
   useDenyRequest,
   useDevices,
   useForgetPhone,
+  usePowerPhone,
   useRemoveComputer,
+  useSetDevicesHelp,
   useStopPhone,
   useUpdateComputer,
   useUpdatePhone,
@@ -73,6 +81,9 @@ export function DevicesSection({ start }: { start?: ConnectStart | null }) {
   const [renaming, setRenaming] = useState<Target | null>(null);
   const [removing, setRemoving] = useState<Target | null>(null);
   const canConnect = can(org, "pair_computers");
+  const admin = can(org, "configure");
+  const help = useSetDevicesHelp(org.id);
+  const toast = useToast();
   const list = devices.data?.devices ?? [];
   const counts = deviceCounts(list);
   const rows = deviceRows(list, filter, query);
@@ -163,6 +174,28 @@ export function DevicesSection({ start }: { start?: ConnectStart | null }) {
             )}
           </EmptyState>
         ))}
+      {/* The workspace's switch over every computer's help: an admin's. */}
+      {admin && devices.isSuccess && (
+        <Card aria-label={t("devices.helpWorkspace")}>
+          <div className="settings-rows">
+            <PrefRow
+              id="dv-help"
+              icon="bolt"
+              label={t("devices.helpWorkspace")}
+              hint={t("devices.helpWorkspaceHint")}
+              control={
+                <Switch
+                  id="dv-help-switch"
+                  checked={devices.data.devicesHelp !== false}
+                  onCheckedChange={(on) =>
+                    help.mutate(on, { onError: (err) => toast.show(errorText(t, err), "error") })
+                  }
+                />
+              }
+            />
+          </div>
+        </Card>
+      )}
       {edition === "selfhost" && (
         <>
           <HostComputerCard onlyOff />
@@ -199,18 +232,17 @@ function JoinRow({ request: r, onLetJoin }: { request: DeviceJoinRequest; onLetJ
       <span className="dv-row__acts ac-acts">
         <Button
           size="sm"
-          loading={deny.isPending}
-          disabled={deny.isPending}
+          // The row leaves at once (and this button with it): the call's own promise says how it went.
           onClick={() =>
-            deny.mutate(r.id, {
-              onSuccess: () => toast.show(t("devices.request.denied", { name: r.name })),
-              onError: (err) => toast.show(errorText(t, err), "error"),
-            })
+            void deny.mutateAsync(r.id).then(
+              () => toast.show(t("devices.request.denied", { name: r.name })),
+              (err: unknown) => toast.show(errorText(t, err), "error"),
+            )
           }
         >
           {t("devices.request.deny")}
         </Button>
-        <Button size="sm" variant="primary" disabled={deny.isPending} onClick={onLetJoin}>
+        <Button size="sm" variant="primary" onClick={onLetJoin}>
           {t("devices.request.letJoin")}
         </Button>
       </span>
@@ -239,16 +271,24 @@ export function DeviceRowView({
   const { t, i18n } = useTranslation();
   const { org, me } = useOrg();
   const stop = useStopPhone(org.id);
+  const power = usePowerAction();
   const toast = useToast();
   const navigate = useNavigate();
   const d = row.device;
   const host = row.kind === "phone" ? row.host : null;
-  const detail = statusDetail(t, i18n.language, d.status, { host: host?.name, hostOs: host?.os, ios: iosOf(d) });
+  const maintenance = row.kind === "computer" ? (row.device.maintenance ?? null) : null;
+  const detail = statusDetail(t, i18n.language, d.status, {
+    host: host?.name,
+    hostOs: host?.os,
+    ios: iosOf(d),
+    maintenance,
+  });
   const target: Target =
     row.kind === "computer" ? { kind: "computer", device: row.device } : { kind: "phone", device: row.device };
   const label = t("devices.menu", { name: d.name });
   const canStop = row.kind === "phone" && d.status.kind === "in_use" && (d.mayManage || d.status.userId === me.user.id);
   const managed = row.kind === "computer" && row.device.machineKind === "managed";
+  const powers = row.kind === "phone" ? powerChoice(row.device) : null;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a grid row of the kit's list (a div), named for screen readers
     <div
@@ -287,22 +327,35 @@ export function DeviceRowView({
         </span>
       </span>
       <span className="dv-row__status">
-        <StatusPill status={d.status} />
-        {detail &&
-          (d.status.kind === "needs_you" && row.kind === "phone" && d.mayManage ? (
-            <button type="button" className="ac-link dv-row__detail" onClick={() => onFix(row.device, host)}>
-              {detail}
-            </button>
-          ) : (
-            <span className="dv-row__detail">{detail}</span>
-          ))}
+        {detail && onHostPage && row.kind === "phone" ? (
+          <StatusTip
+            status={d.status}
+            detail={detail}
+            onFix={d.status.kind === "needs_you" && d.mayManage ? () => onFix(row.device, host) : undefined}
+          />
+        ) : (
+          <>
+            <StatusPill status={d.status} />
+            {detail &&
+              (d.status.kind === "needs_you" && row.kind === "phone" && d.mayManage ? (
+                <button type="button" className="ac-link dv-row__detail" onClick={() => onFix(row.device, host)}>
+                  {detail}
+                </button>
+              ) : (
+                <span className={maintenance ? "dv-row__detail ac-hintline" : "dv-row__detail"}>
+                  {detail}
+                  {maintenance && <MaintenanceHint maintenance={maintenance} />}
+                </span>
+              ))}
+          </>
+        )}
       </span>
       <span className="dv-row__people">
         <OwnerLine device={{ ownerUserId: row.kind === "computer" ? ownerOf(row.device) : d.ownerUserId }} />
         <WhoLine device={d} host={host} />
       </span>
       <span className="dv-row__end">
-        {!managed && (d.mayManage || canStop) && (
+        {!managed && (d.mayManage || canStop || powers) && (
           <Menu
             align="end"
             label={label}
@@ -324,6 +377,15 @@ export function DeviceRowView({
             >
               {t("devices.settings")}
             </MenuItem>
+            {powers && (
+              <MenuItem
+                icon={powers === "start" ? "play" : "power"}
+                disabled={power.pending}
+                onSelect={() => power.run(d, powers === "start")}
+              >
+                {t(powers === "start" ? "devices.power.start" : "devices.power.stop")}
+              </MenuItem>
+            )}
             {d.mayManage && (
               <MenuItem icon="edit" onSelect={() => onRename(target)}>
                 {t("devices.rename")}
@@ -362,6 +424,53 @@ export function DeviceRowView({
         )}
       </span>
     </div>
+  );
+}
+
+/** Ligar or Desligar, with the toast that says how it went: a row's menu and the phone's page. */
+export function usePowerAction() {
+  const { t } = useTranslation();
+  const { org } = useOrg();
+  const toast = useToast();
+  const power = usePowerPhone(org.id);
+  const run = (phone: { id: string; name: string }, on: boolean) =>
+    power.mutate(
+      { id: phone.id, on },
+      {
+        onSuccess: () => toast.show(t(on ? "devices.power.starting" : "devices.power.stopped", { name: phone.name })),
+        onError: (err) => toast.show(errorText(t, err), "error"),
+      },
+    );
+  return { run, pending: power.isPending };
+}
+
+/**
+ * A phone's state on its computer's page: the pill alone, its detail in its tip ("para Rui desde 22:58"). When the
+ * phone needs the viewer, the pill is a button that opens the fix, and the tip's words are the same action as a link.
+ */
+function StatusTip({ status, detail, onFix }: { status: PhoneDevice["status"]; detail: string; onFix?: () => void }) {
+  if (onFix)
+    return (
+      <Tip
+        button
+        look="ac-msg__tip"
+        tip={
+          <button type="button" tabIndex={-1} className="ac-link" onClick={onFix}>
+            {detail}
+          </button>
+        }
+      >
+        <button type="button" className="dv-status-tip" onClick={onFix}>
+          <StatusPill status={status} />
+          <span className="ac-visually-hidden">{detail}</span>
+        </button>
+      </Tip>
+    );
+  return (
+    <Tip look="ac-msg__tip" tip={detail} tabIndex={0} className="dv-status-tip">
+      <StatusPill status={status} />
+      <span className="ac-visually-hidden">{detail}</span>
+    </Tip>
   );
 }
 
@@ -419,20 +528,18 @@ export function DeviceRemoveDialog({
       onRemove={() => {
         if (!target) return;
         const name = target.device.name;
-        const done = {
-          onSuccess: () => {
-            toast.show(
-              target.kind === "computer" && target.device.machineKind === "host"
-                ? t("machines.host.stopped")
-                : t(wifi ? "devices.iphone.wifi.stopped" : phone ? "devices.forgotten" : "devices.removed", { name }),
-            );
-            onClose();
-            onRemoved?.();
-          },
-          onError: (err: unknown) => toast.show(errorText(t, err), "error"),
-        };
-        if (phone) forget.mutate(target.device.id, done);
-        else remove.mutate(target.device.id, done);
+        const said =
+          target.kind === "computer" && target.device.machineKind === "host"
+            ? t("machines.host.stopped")
+            : t(wifi ? "devices.iphone.wifi.stopped" : phone ? "devices.forgotten" : "devices.removed", { name });
+        // Out of the list at once and the dialog closes; a refusal puts it back and says why.
+        const gone = phone ? forget.mutateAsync(target.device.id) : remove.mutateAsync(target.device.id);
+        void gone.then(
+          () => toast.show(said),
+          (err: unknown) => toast.show(errorText(t, err), "error"),
+        );
+        onClose();
+        onRemoved?.();
       }}
     />
   );

@@ -1,3 +1,4 @@
+import type { OsPermission } from "@agenteschat/adapters/machine-protocol";
 import type { ServerCheck } from "@agenteschat/client/lib/server";
 import type { HelloLine } from "../control/client";
 import type { Candidate } from "../control/first-run";
@@ -16,6 +17,7 @@ import type { Platform } from "../control/platform";
 import type { ServerList, ServerWorkspaces } from "../control/server";
 import type { ThisMacRequest } from "../control/this-mac";
 import type { TrayState } from "../control/tray";
+import type { ReportFacts } from "../report/report";
 
 /** The app's windows (Tauri labels). */
 export type WindowName = "popover" | "welcome" | "prefs" | "notch";
@@ -153,7 +155,14 @@ export interface Host {
   showWindow(name: WindowName): Promise<void>;
   hideWindow(name: WindowName): Promise<void>;
   quit(): Promise<void>;
+  /**
+   * Asks with the system's own dialog whether to quit, and quits on yes (`quit_ask`): a window of its own, which stays
+   * up while another window takes focus. True when the person chose to quit.
+   */
+  askQuit(words: { title: string; body: string; quit: string; cancel: string }): Promise<boolean>;
   appInfo(): Promise<AppInfo>;
+  /** This computer's system, size and web view's memory, and this opening, for a problem report (vitals.rs). */
+  reportFacts(): Promise<ReportFacts>;
   /** Linux: Compatibility mode as the next opening will have it. */
   compatMode(): Promise<CompatMode>;
   setCompatMode(on: boolean): Promise<void>;
@@ -258,7 +267,7 @@ export interface Host {
   /** macOS: a short Bonjour browse, which raises the Local Network prompt the first time. Nothing says the answer. */
   askLocalNetwork(): Promise<void>;
   /** System Settings › Privacy & Security on the permission's own list (the microphone: for voice messages). */
-  openPrivacy(pane: MacPermission | "microphone"): Promise<void>;
+  openPrivacy(pane: MacPermission | OsPermission): Promise<void>;
   /** The setup macOS may quit the app in the middle of, kept until it is finished (`prepare.rs`). */
   setupState(): Promise<SetupState | null>;
   /** Keeps it (with the main window's page, to open there again) or, null, forgets it. */

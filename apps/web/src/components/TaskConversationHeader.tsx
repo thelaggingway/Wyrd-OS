@@ -3,6 +3,7 @@ import { joinNames, relativeTime } from "@agenteschat/client/lib/format";
 import { AvatarStack, Button, cx, Icon } from "@agenteschat/ui";
 import { useTranslation } from "react-i18next";
 import { useActors } from "@/components/actors";
+import { MetaLine } from "@/components/MetaLine";
 import { NavToggle } from "@/components/NavDrawer";
 
 /**
@@ -23,7 +24,7 @@ export function TaskConversationHeader({
 }) {
   const { t, i18n } = useTranslation();
   const actors = useActors();
-  const people = thread.participants.flatMap((p) => (p.id ? [{ type: p.type, id: p.id }] : []));
+  const people = thread.participants.flatMap((p) => (p.id && p.type !== "app" ? [{ type: p.type, id: p.id }] : []));
   const names = joinNames(
     people.slice(0, 4).map((p) => actors.name(p)),
     t,
@@ -42,17 +43,15 @@ export function TaskConversationHeader({
         <h1 className="channel__title thread-title">
           <span className="thread-title__text">{title ?? t("issues.conversation.title")}</span>
         </h1>
-        <span className="channel__topic thread-head__meta">
-          {names && <span className="thread-head__where">{names}</span>}
-          {thread.replyCount > 0 && (
-            <>
-              {names && <span aria-hidden="true">·</span>}
-              <span>{t("issues.conversation.messages", { count: thread.replyCount })}</span>
-            </>
-          )}
-          <span aria-hidden="true">·</span>
-          <time dateTime={thread.lastActivityAt}>{relativeTime(t, i18n.language, thread.lastActivityAt)}</time>
-        </span>
+        <MetaLine
+          where={names}
+          parts={[
+            thread.replyCount > 0 && t("issues.conversation.messages", { count: thread.replyCount }),
+            <time key="at" dateTime={thread.lastActivityAt}>
+              {relativeTime(t, i18n.language, thread.lastActivityAt)}
+            </time>,
+          ]}
+        />
       </div>
       {onClose && (
         <Button

@@ -84,7 +84,7 @@ export interface PushStrings {
    */
   deviceFolderTitle: (a: string, f: string, d: string) => string;
   deviceFolderBody: string;
-  /** `admin_ask`: `a` asks who may do it (`what`: channel_agent, create_agents, webhook; `l` the channel or service). */
+  /** `admin_ask`: `a` asks who may do it (`what`: channel_agent, create_agents, webhook, voice; `l` the channel or service). */
   adminAskTitle: (a: string, what: string, l: string) => string;
   deviceWaitingTitle: (person: string, device: string) => string;
   deviceWaitingBody: string;
@@ -105,6 +105,25 @@ export interface PushStrings {
   teamWeekReadyPersonal: string;
   /** A reminder of what the person left unread in "Esperando você": how many things, over the oldest one's own line. */
   teamWatchStill: (count: number) => string;
+  /**
+   * The Live Activity of the agents at work (ADR 0210): its first line when a request waits (`a` the agent), the word
+   * at the closed island's end in its place, how many agents work, what an agent does when it says nothing of its
+   * own, one still in line, and the last word once nothing is left. Short: the island is small.
+   */
+  liveActivityApproval: (a: string) => string;
+  liveActivityQuestion: (a: string) => string;
+  liveActivitySecret: (a: string) => string;
+  liveActivityApprovalShort: string;
+  liveActivityQuestionShort: string;
+  liveActivitySecretShort: string;
+  /** The request in one line when it has no words of its own to show (asked in a confidential thread, say). */
+  liveActivityApprovalStep: string;
+  liveActivityQuestionStep: string;
+  liveActivitySecretStep: string;
+  liveActivityWorking: (count: number) => string;
+  liveActivityWorkingStep: string;
+  liveActivityQueuedStep: string;
+  liveActivityDone: string;
 }
 
 export const en: PushStrings = {
@@ -194,11 +213,13 @@ export const en: PushStrings = {
   deviceFolderTitle: (a, f, d) => (f ? `${a} asks for ${f} on your ${d}` : `${a} asks for a folder on your ${d}`),
   deviceFolderBody: "Allow it in the app on that computer.",
   adminAskTitle: (a, what, l) =>
-    what === "channel_agent"
-      ? `${a} asks you to add an agent to #${l}`
-      : what === "create_agents"
-        ? `${a} asks to be able to create agents`
-        : `${a} asks you to set up the ${l} webhook for routines`,
+    what === "voice"
+      ? `${a} asks you to turn on voice messages`
+      : what === "channel_agent"
+        ? `${a} asks you to add an agent to #${l}`
+        : what === "create_agents"
+          ? `${a} asks to be able to create agents`
+          : `${a} asks you to set up the ${l} webhook for routines`,
   deviceWaitingTitle: (p, d) => `${p}'s agent is waiting for your ${d}`,
   deviceWaitingBody: "It starts when it's back.",
   teamWeekReady: "Your team's week is ready",
@@ -211,4 +232,17 @@ export const en: PushStrings = {
   joinSuggestionTitlePersonal: (by, name) => `${by} suggested inviting ${name}`,
   teamWeekReadyPersonal: "Your week is ready",
   teamWatchStill: (n) => (n === 1 ? "1 thing still waits on you" : `${n} things still wait on you`),
+  liveActivityApproval: (a) => `${a} asks for approval`,
+  liveActivityQuestion: (a) => `${a} has a question`,
+  liveActivitySecret: (a) => `${a} needs a secret`,
+  liveActivityApprovalShort: "Approve?",
+  liveActivityQuestionShort: "Reply?",
+  liveActivitySecretShort: "Send?",
+  liveActivityApprovalStep: "Waiting for your approval",
+  liveActivityQuestionStep: "Waiting for your answer",
+  liveActivitySecretStep: "Waiting for a secret from you",
+  liveActivityWorking: (n) => `${n} working`,
+  liveActivityWorkingStep: "Working",
+  liveActivityQueuedStep: "In line",
+  liveActivityDone: "Done",
 };

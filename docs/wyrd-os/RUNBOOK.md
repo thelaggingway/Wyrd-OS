@@ -89,6 +89,31 @@ models failed it.
    `authorized_keys` can be limited to running this script alone (see its header). This is the intended path for
    client servers.
 
+### Taking a new upstream release
+
+Wyrd-OS is based on upstream v0.1.18 since 2026-11-28 (it was v0.1.8 before). To take the next one:
+
+```sh
+git remote add upstream https://github.com/agentes-chat/agentes-chat   # once; then
+git remote set-url --push upstream DISABLED                            # never push there
+git fetch upstream --tags && git merge --no-ff v0.1.<n>
+```
+
+Conflicts land where Wyrd-OS edits upstream files (the `Dockerfile`, `right-hand-prompt.ts`, the config schema,
+a few tests). Keep both sides. Upstream tests that name the right hand `@lodi` become `@chief`. Regenerate the
+operator contract with `UPDATE_OPERATOR_OPENAPI=1 bun test apps/server/test/operator.test.ts`, dry-run the
+branding (`bun brand/apply.ts`, then `git checkout -- packages apps`), and run the checks in `CLAUDE.md`. Then
+test the image on a machine made from a snapshot before changing a live server, and read the release notes'
+"For operators" part: a release can change `docker-compose.yml`, which each server keeps its own copy of.
+
+From v0.1.18 on:
+
+- **Compose:** the app mounts a `speech-local` volume at `/data/speech`. Copy the new `docker-compose.yml` to
+  the server (keep its `docker-compose.override.yml`) before pulling the image.
+- **Behind a public proxy such as Cloudflare:** the app trusts `X-Forwarded-For` only from loopback, a private
+  network or `TRUSTED_PROXIES`. List the proxy's address ranges there, or every rate limit counts the proxy's
+  address as one person.
+
 ### Backups
 
 Upstream's backup profile is in `deploy/backup`. wyrd-os-1 instead runs a small `localbackup` service from

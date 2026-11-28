@@ -1,4 +1,20 @@
 {
+  "permissionAsk": {
+    "title": "agentes.chat necesita {{permission}}",
+    "done": "Ya lo permití",
+    "later": "Ahora no",
+    "trayTitle": "Esperando {{permission}}",
+    "why": {
+      "app_management": "Los agentes lo necesitan para cambiar apps en este {{device}}.",
+      "screen": "Los agentes lo necesitan para hacer capturas de este {{device}}.",
+      "accessibility": "Los agentes lo necesitan para hacer clic y escribir en apps de este {{device}}.",
+      "disk": "Los agentes lo necesitan para abrir tus archivos sin que macOS pregunte por cada carpeta.",
+      "network": "Los agentes lo necesitan para llegar a teléfonos y aparatos de tu red.",
+      "camera": "Los agentes lo necesitan para usar la cámara de este {{device}}.",
+      "microphone": "Los agentes lo necesitan para usar el micrófono de este {{device}}.",
+      "automation": "Los agentes lo necesitan para controlar otras apps en este {{device}}."
+    }
+  },
   "device": {
     "mac": "Mac",
     "windows": "PC",
@@ -69,6 +85,12 @@
         "tabs": "cambiando de pestaña"
       }
     },
+    "apps": {
+      "title": "{{agent}} está usando {{app}}",
+      "detail": "Tu ratón y tu teclado siguen siendo tuyos",
+      "stop": "Detener",
+      "stopped": "{{agent}} dejó de usar tus apps"
+    },
     "label": "agentes.chat",
     "now": "Ahora",
     "seeAll": "Ver todo",
@@ -133,12 +155,17 @@
     "allowedOne": "{{folder}} permitida para {{agent}}",
     "allowedAll": "{{folder}} permitida para todos los agentes",
     "denied": "Rechazado. {{agent}} lo avisa en el chat.",
+    "answerFailed": "No se pudo responder a esta solicitud: {{message}}",
     "notifTitle": "{{agent}} quiere usar la carpeta {{folder}}",
     "allowedTitle": "{{name}} activó {{tool}} desde agentes.chat",
     "allowedBody": "Si no fuiste tú, deshazlo aquí.",
     "allowedUndo": "Deshacer",
     "allowedOk": "Entendido",
     "allowedUndone": "Desactivado de nuevo: {{tool}}",
+    "pickTitle": "{{name}} pide una carpeta para los agentes",
+    "pickTitleAgent": "{{name}} pide una carpeta para {{agent}}",
+    "pickBody": "Elige qué carpeta permitir en esta {{device}}.",
+    "pickChoose": "Elegir carpeta",
     "quitTitle": "¿Salir de agentes.chat?",
     "quitBody": "Los agentes no pueden usar esta {{device}} mientras la app esté cerrada. Lo que ya está en marcha termina y envía el resultado cuando la vuelvas a abrir.",
     "quitHereBody": "agentes.chat se detiene en esta {{device}}: nadie puede usarlo, ni aquí, ni en tu teléfono ni en los de tu equipo, hasta que vuelvas a abrir la app.",
@@ -159,8 +186,8 @@
     "cloudText": "Siempre encendido. Nosotros nos ocupamos de todo, tú solo lo usas.",
     "here": "En esta {{device}}",
     "hereText": "Tus agentes trabajan mientras la app esté abierta.",
-    "box": "En una computadora siempre encendida",
-    "boxText": "Una Mac mini o una computadora de la oficina, instalada una vez.",
+    "box": "En un servidor o VPS",
+    "boxText": "Siempre encendido, incluso con esta app cerrada. Lo instalas una vez.",
     "goCloud": "Seguir en la nube",
     "goHere": "Preparar esta {{device}}",
     "goBox": "Ver cómo instalarlo",
@@ -168,15 +195,15 @@
     "haveOneLink": "Entrar con su dirección"
   },
   "install": {
-    "title": "Instalar en una computadora siempre encendida",
+    "title": "Instalar en un servidor o VPS",
     "lead": "Se hace una vez. Después sigue funcionando solo, incluso con esta app cerrada.",
-    "step1": "En la computadora que queda encendida, abre la Terminal y pega esto",
+    "step1": "En el servidor, abre la Terminal (o conéctate por SSH) y pega esto",
     "step2": "Al final aparece un enlace. Ábrelo aquí y listo.",
     "noLink": "¿Sin el enlace?",
     "someoneElse": "¿Lo va a instalar otra persona?",
     "copy": "Copiar las instrucciones",
     "copied": "Instrucciones copiadas",
-    "text": "Para instalar agentes.chat en una computadora que queda siempre encendida (una Mac mini, una computadora de la oficina o un servidor):\n\n1. En esa computadora, abre la Terminal y pega esto:\n{{command}}\n\n2. Al final aparece un enlace. Envíamelo: abre el workspace en la app."
+    "text": "Para instalar agentes.chat en un servidor o VPS (o en una computadora que queda siempre encendida, como una Mac mini):\n\n1. En el servidor, abre la Terminal (o conéctate por SSH) y pega esto:\n{{command}}\n\n2. Al final aparece un enlace. Envíamelo: abre el workspace en la app."
   },
   "connect": {
     "title": "Entrar en un workspace que ya existe",
@@ -236,7 +263,7 @@
     "openTailscale": "Abrir Tailscale",
     "getTailscale": "Descargar Tailscale",
     "usage": "Enviar estadísticas de uso anónimas a agentes.chat",
-    "usageText": "Cifras como personas, agentes, tamaño de las máquinas, tokens de IA usados y cuántos datos envían y reciben los navegadores de los agentes. Nunca mensajes, archivos, nombres ni sitios.",
+    "usageText": "Cifras como personas, agentes, tamaño de las máquinas, tokens de IA usados, cuántos datos envían y reciben los navegadores de los agentes y qué tan rápido abren y funcionan las apps. Nunca mensajes, archivos, nombres ni sitios.",
     "start": "Empezar",
     "setting": "Preparando todo",
     "rest": "Cuando cierres la app, tus agentes descansan. Vuelven en cuanto la abras de nuevo.",
@@ -459,6 +486,13 @@
     "linkBody": "Si no lo pediste, elige Ahora no.",
     "waiting": "Esperando a que {{by}} la deje entrar…",
     "done": "Conectada a {{org}}",
+    "share": "Dejar que todo el espacio de trabajo lo use",
+    "internet": "Los agentes usan el internet de esta computadora",
+    "internetOn": "Los sitios que abren los agentes ven tu ubicación",
+    "internetOff": "Desactivado: los agentes usan su conexión de siempre",
+    "internetHint": "Los agentes del workspace abren sitios por la conexión de esta computadora. Solo sitios web y nunca nada de tu propia red. Mientras esta computadora esté sin conexión, usan su conexión de siempre.",
+    "shareOff": "Solo tú por ahora",
+    "shareHint": "Los agentes de todos en {{org}} pueden ejecutar tareas ahí, con tu usuario.",
     "addFolders": "Agregar carpetas",
     "expired": "Este enlace caducó. Crea uno nuevo en Dispositivos.",
     "openDevices": "Abrir Dispositivos",
@@ -502,6 +536,9 @@
     "grokDesc": "Escribe y cambia código en las carpetas permitidas, con tu cuenta de Grok.",
     "antigravityName": "Antigravity CLI",
     "antigravityDesc": "Escribe y cambia código en las carpetas permitidas, con tu cuenta de Gemini.",
+    "devinName": "Devin CLI",
+    "devinDesc": "Escribe y cambia código en las carpetas permitidas, con tu cuenta de Devin.",
+    "devinWindows": "Devin todavía no funciona en Windows: aquí su CLI no puede mantener separado el inicio de sesión de cada cuenta. Los agentes piensan con Devin en una computadora Mac o Linux.",
     "found": "Encontrado",
     "notFound": "No encontrado",
     "loggedOut": "Sin sesión iniciada",
@@ -793,6 +830,7 @@
       "brainMax": "Conversaciones abiertas",
       "brainMaxDesc": "Cuántas quedan abiertas en cada espacio de trabajo. Más responden más rápido, pero usan más memoria.",
       "brainIdle": "Cerrar una conversación inactiva después de",
+      "mixed": "No es igual en todos: {{values}}. Un cambio aquí se aplica a todos.",
       "folder": "Carpeta de los agentes",
       "folderDesc": "Una carpeta por espacio de trabajo, con una carpeta para cada agente."
     }

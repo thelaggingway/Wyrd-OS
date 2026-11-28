@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  CO_AUTHOR_CASE_PROTOCOL,
   createFakeErrorReporter,
+  listenResumedTopic,
   MACHINE_PROTOCOL_VERSION,
   orgTopic,
+  type PubSub,
   RUNNER_STOPPED_CLOSE,
   type ServerFrame,
   sealSecret,
@@ -20,6 +23,7 @@ import {
   deleteMachine,
   deliverSecret,
   drainOutbox,
+  enableCaches,
   executeRun,
   expireSecretRequests,
   ForbiddenError,
@@ -252,6 +256,41 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
     expect(runner.closed()).toMatchObject({ code: 4408 });
   });
 
+  test("a server whose loop stalls keeps the runners whose pongs it couldn't read in time; a dead link still goes", async () => {
+    f = await setup({ machines: true });
+    const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-l", heartbeatMs: 100 });
+    hubs.push(hub);
+    const alive = fakeRunner(hub, { pong: true });
+    await alive.hello((await pair()).token);
+    const dead = fakeRunner(hub, { dead: true });
+    await dead.hello((await pair(f.owner.id, "Gone box")).token);
+    // Busy for over two heartbeats (under the four after which silence closes anyway): the next ping tick fires
+    // late, long after the last pong it could read.
+    void alive.frame({ type: "pong", at: Date.now() });
+    Bun.sleepSync(220);
+    await Bun.sleep(400);
+    expect(alive.closed()).toBeNull();
+    expect(alive.sent.filter((frame) => frame.type === "ping").length).toBeGreaterThanOrEqual(3);
+    expect(dead.closed()).toMatchObject({ code: 4408, reason: "no pong" });
+  });
+
+  test("a computer that keeps dropping gets one offline check per grace window, a full grace after its last drop", async () => {
+    f = await setup({ machines: true });
+    const grace = 3_600_000;
+    const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-f", taskOfflineGraceMs: grace });
+    hubs.push(hub);
+    const paired = await pair();
+    for (let i = 0; i < 5; i++) {
+      const runner = fakeRunner(hub);
+      await runner.hello(paired.token);
+      await runner.disconnect({ code: 1006, reason: "" });
+    }
+    const lastDrop = Date.now();
+    const jobs = await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "machine.tasks_offline"));
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(lastDrop + grace);
+  });
+
   test("a request cut by its socket closing fails as dropped (it may have run); our own stop says it is ours", async () => {
     f = await setup({ machines: true });
     const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-d" });
@@ -285,8 +324,11 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
     const graces = (await jobs())
       .map((j) => ({ ms: j.nextAttemptAt.getTime() - j.createdAt.getTime(), payload: j.payload }))
       .sort((a, b) => a.ms - b.ms);
-    expect(graces[0]?.ms).toBeLessThan(TASK_OFFLINE_GRACE_MS + 5000);
-    expect(graces[1]?.ms).toBeLessThan(TASK_OFFLINE_GRACE_MS + 5000);
+    // Due at the end of the window after the one it closed in: a full grace at least, two at most.
+    for (const g of graces.slice(0, 2)) {
+      expect(g.ms).toBeGreaterThan(TASK_OFFLINE_GRACE_MS - 5000);
+      expect(g.ms).toBeLessThanOrEqual(2 * TASK_OFFLINE_GRACE_MS);
+    }
     expect(graces.slice(0, 2).map((g) => g.payload)).toContainEqual({
       machineId: paired.machineId,
       statusOnly: true,
@@ -492,10 +534,21 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
       );
     await runner.frame({ type: "pong", at: 1, load: { ...base, diskFreeGb: 40, diskUse: 0.6, sharedGb: 2.5 } });
     expect(await warnings()).toEqual([]);
-    expect((await listMachines(f.db, f.owner.id, f.org.id))[0]?.disk).toEqual({ freeGb: 40, use: 0.6, sharedGb: 2.5 });
+    expect((await listMachines(f.db, f.owner.id, f.org.id))[0]?.disk).toEqual({
+      freeGb: 40,
+      use: 0.6,
+      sharedGb: 2.5,
+      sizeGb: null,
+      parts: null,
+    });
 
     await runner.frame({ type: "pong", at: 2, load: { ...base, diskFreeGb: 9, diskUse: 0.91, sharedGb: 30 } });
-    await runner.frame({ type: "pong", at: 3, load: { ...base, diskFreeGb: 8, diskUse: 0.92, sharedGb: 31 } });
+    const parts = { projects: 20, apps: 15, agents: 40, caches: 12, system: 6 };
+    await runner.frame({
+      type: "pong",
+      at: 3,
+      load: { ...base, diskFreeGb: 8, diskUse: 0.92, sharedGb: 31, diskGb: 100, diskParts: parts },
+    });
     const [warned] = await warnings();
     expect(await warnings()).toHaveLength(1);
     expect(warned?.source).toMatchObject({ machineId: paired.machineId, label: "Build box" });
@@ -503,7 +556,13 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
 
     // A runner that restarts reports once without the disk: the page keeps it and nobody hears it again.
     await runner.frame({ type: "pong", at: 4, load: base });
-    expect((await listMachines(f.db, f.owner.id, f.org.id))[0]?.disk).toEqual({ freeGb: 8, use: 0.92, sharedGb: 31 });
+    expect((await listMachines(f.db, f.owner.id, f.org.id))[0]?.disk).toEqual({
+      freeGb: 8,
+      use: 0.92,
+      sharedGb: 31,
+      sizeGb: 100,
+      parts,
+    });
     await runner.frame({ type: "pong", at: 5, load: { ...base, diskFreeGb: 8, diskUse: 0.92 } });
     // Hovering at the line: under 85% but not under 80% doesn't arm it again.
     await runner.frame({ type: "pong", at: 6, load: { ...base, diskFreeGb: 14, diskUse: 0.83 } });
@@ -955,6 +1014,11 @@ describe("hub", () => {
     await Bun.sleep(60);
     expect(slow.sent).toEqual([]);
     expect(slow.closed()).toMatchObject({ code: 4408 });
+    // A hello the server is still checking (a busy database) is not a runner that said nothing.
+    const checking = fakeRunner(hub);
+    checking.conn.authing = true;
+    await Bun.sleep(60);
+    expect(checking.closed()).toBeNull();
   });
 
   test("hello → welcome and online; bad token and outdated runners are refused", async () => {
@@ -997,6 +1061,18 @@ describe("hub", () => {
     expect(after).toMatchObject({ online: false, connectedReplica: null });
     expect(statuses).toContainEqual({ type: "machine.status", machineId: paired.machineId, online: false });
     await expect(hub.call(paired.machineId, { op: "list", path: "", depth: 1 })).rejects.toThrow(MachineOfflineError);
+
+    // A host computer whose display name is still its uncustomized hostname updates `name` on `hello`.
+    await f.db
+      .update(schema.machines)
+      .set({ kind: "host", name: "vps-old", hostname: "vps-old" })
+      .where(eq(schema.machines.id, paired.machineId));
+    const hostRunner = fakeRunner(hub);
+    await hostRunner.hello(paired.token, { hostname: "vps-new", exec: true });
+    expect(hostRunner.sent[0]).toMatchObject({ type: "welcome", name: "vps-new" });
+    const [migrated] = await f.db.select().from(schema.machines);
+    expect(migrated).toMatchObject({ kind: "host", name: "vps-new", hostname: "vps-new" });
+    await hostRunner.disconnect();
   });
 
   test("requests, live output, cancel, errors; a second runner replaces the first; delete closes it", async () => {
@@ -1075,6 +1151,49 @@ describe("hub", () => {
 
     await runner.disconnect();
     await expect(hubB.call(paired.machineId, { op: "list", path: "", depth: 1 })).rejects.toThrow(MachineOfflineError);
+  });
+
+  test("a reply whose signal was lost waits for the caller's next read, which a pub/sub that missed events brings now", async () => {
+    f = await setup({ machines: true });
+    const hubA = f.machineHub as MachineHub;
+    // B never hears replies: only its own read of the row can see one.
+    const deaf: PubSub = {
+      publish: (topic, event) => f.pubsub.publish(topic, event),
+      subscribe: (topic, handler) =>
+        topic.startsWith("machine-rpc-reply:") ? () => {} : f.pubsub.subscribe(topic, handler),
+    };
+    const hubB = createMachineHub({ db: f.db, pubsub: deaf, replicaId: "replica-b" });
+    hubs.push(hubB);
+    const paired = await pair();
+    const runner = fakeRunner(hubA);
+    await runner.hello(paired.token);
+    runner.files.set("notes.txt", new TextEncoder().encode("hi"));
+
+    const read = hubB.call(paired.machineId, { op: "read", path: "notes.txt", maxBytes: 100 });
+    await until(async () => (await f.db.select().from(schema.machineRpc))[0]?.status === "done", "the reply");
+    // While the pub/sub delivers, B reads its row only every RPC_QUIET_POLL_MS.
+    expect(await within(read, 1000)).toBe("pending");
+    await f.pubsub.publish(listenResumedTopic, { type: "pubsub.resumed", full: false });
+    expect(await within(read, 500)).toBe("resolved");
+  });
+
+  test("a computer that left this replica for another reads as online here at once, its kept row dropped", async () => {
+    f = await setup({ machines: true });
+    const hubA = f.machineHub as MachineHub;
+    const hubB = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-b" });
+    hubs.push(hubB);
+    const paired = await pair();
+    enableCaches();
+    try {
+      const first = fakeRunner(hubA);
+      await first.hello(paired.token);
+      expect(await hubA.status(paired.machineId)).toMatchObject({ online: true });
+      await first.disconnect();
+      await fakeRunner(hubB).hello(paired.token);
+      expect(await hubA.status(paired.machineId)).toMatchObject({ online: true });
+    } finally {
+      enableCaches(false);
+    }
   });
 
   test("a row left online by a replica that died is offline once stale", async () => {
@@ -1199,7 +1318,7 @@ describe("tools on a connected machine", () => {
         id: f.agent.id,
         handle: "dev",
         name: "Dev",
-        ...(r.op === "exec" ? { coAuthors: ["Co-authored-by: Dev <noreply@agentes.chat>"] } : {}),
+        ...(r.op === "exec" ? { coAuthors: ["Co-Authored-By: Dev <noreply@agentes.chat>"] } : {}),
       });
     }
     // A person asked to turn it off: the next command goes without it.
@@ -2407,4 +2526,36 @@ test("personal computer IPs are neither stored nor broadcast to workspace reader
     .set({ egress: { ip: "8.8.8.8", at: new Date().toISOString() } })
     .where(eq(schema.machines.id, paired.machineId));
   for (const actor of [f.owner, guest]) expect((await listMachines(f.db, actor.id, f.org.id))[0]?.egress).toBeNull();
+});
+
+test("a warm start carries the agent its turn will: the same co-author line, so the turn takes its process", async () => {
+  f = await setup({ machines: true });
+  const hub = f.machineHub as MachineHub;
+  const paired = await pair();
+  const runner = fakeRunner(hub, { dead: true });
+  await runner.hello(paired.token);
+  const agent = { id: f.agent.id, handle: "dev", name: "Dev" };
+  const runId = crypto.randomUUID();
+  void hub.call(paired.machineId, { ...brainTurn(runId), agent }).catch(() => {});
+  const { session, cwd, kind } = brainTurn(runId);
+  void hub.call(paired.machineId, { op: "brain.warm", runId, kind, session, cwd, agent }).catch(() => {});
+  await until(() => runner.sent.filter((s) => s.type === "request").length === 2);
+  const [turn, warm] = ["brain.turn", "brain.warm"].map(
+    (op) => (runner.sent.find((s) => s.type === "request" && s.op === op) as Request | undefined)?.agent,
+  );
+  expect(turn).toMatchObject({ coAuthors: [expect.stringContaining("Co-Authored-By: Dev")] });
+  expect(warm).toEqual(turn);
+});
+
+test("a runner older than protocol 85 gets the co-author line in the only capitals it takes", async () => {
+  f = await setup({ machines: true });
+  const hub = f.machineHub as MachineHub;
+  const paired = await pair();
+  const runner = fakeRunner(hub, { dead: true });
+  await runner.hello(paired.token, { protocol: CO_AUTHOR_CASE_PROTOCOL - 1 });
+  const agent = { id: f.agent.id, handle: "dev", name: "Dev" };
+  void hub.call(paired.machineId, { ...brainTurn(crypto.randomUUID()), agent }).catch(() => {});
+  await until(() => runner.sent.some((s) => s.type === "request"));
+  const turn = (runner.sent.find((s) => s.type === "request") as Request | undefined)?.agent;
+  expect(turn).toMatchObject({ coAuthors: ["Co-authored-by: Dev <noreply@agentes.chat>"] });
 });

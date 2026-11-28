@@ -15,6 +15,7 @@ import {
   auditQueryOf,
   auditReason,
   auditReasonKey,
+  auditReasonLabel,
   auditRoutine,
   auditSecretText,
   auditSentence,
@@ -26,7 +27,7 @@ import {
   TOOL_CALL,
 } from "@agenteschat/client/lib/audit";
 import { humanize } from "@agenteschat/client/lib/custom-tools";
-import { formatTime, whenAt } from "@agenteschat/client/lib/format";
+import { whenAt } from "@agenteschat/client/lib/format";
 import { can } from "@agenteschat/client/lib/permissions";
 import type { TFunction } from "i18next";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -43,6 +44,7 @@ import {
   GroupedRow,
   type IconName,
   LineIcon,
+  Refreshing,
   SCREEN_X,
   SkeletonList,
   Text,
@@ -79,7 +81,7 @@ const MARK_ICON: Record<AuditMark, IconName> = {
 };
 
 export function AuditScreen({ agentId: first = null }: { agentId?: string | null } = {}) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const when = useWhen();
   const dir = useDirectory();
   const { orgId, org } = useOrg();
@@ -140,45 +142,48 @@ export function AuditScreen({ agentId: first = null }: { agentId?: string | null
               </GroupedList>
             </>
           ) : null}
-          {audit.isPending ? <SkeletonList rows={4} /> : null}
-          {audit.isError && !audit.data ? <LoadFailed onRetry={() => void audit.refetch()} /> : null}
-          {audit.isSuccess && rows.length === 0 ? (
-            show === "all" && !agentId ? (
-              <EmptyState
-                size="panel"
-                agent={look}
-                mood="deal"
-                title={t("mobile.empty.audit.title")}
-                subtitle={t("mobile.empty.audit.text")}
-              />
-            ) : (
-              <EmptyState
-                size="inline"
-                title={t("audit.emptyFiltered")}
-                action={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    label={t("filters.clearAll")}
-                    onPress={() => {
-                      setShow("all");
-                      setAgentId(null);
-                    }}
-                  />
-                }
-              />
-            )
-          ) : null}
-          {days.map(([day, list]) => (
-            <Fragment key={day}>
-              <GroupedHeader>{day}</GroupedHeader>
-              <GroupedList>
-                {list.map((row) => (
-                  <AuditRowView key={row.id} row={row} time={formatTime(i18n.language, row.at)} />
-                ))}
-              </GroupedList>
-            </Fragment>
-          ))}
+          <Refreshing busy={audit.isPlaceholderData} label={t("common.loading")}>
+            {audit.isPending ? <SkeletonList rows={4} /> : null}
+            {audit.isError && !audit.data ? <LoadFailed onRetry={() => void audit.refetch()} /> : null}
+            {audit.isSuccess && rows.length === 0 ? (
+              show === "all" && !agentId ? (
+                <EmptyState
+                  size="panel"
+                  agent={look}
+                  mood="deal"
+                  title={t("mobile.empty.audit.title")}
+                  subtitle={t("mobile.empty.audit.text")}
+                />
+              ) : (
+                <EmptyState
+                  size="inline"
+                  title={t("audit.emptyFiltered")}
+                  action={
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      label={t("filters.clearAll")}
+                      onPress={() => {
+                        setShow("all");
+                        setAgentId(null);
+                      }}
+                    />
+                  }
+                />
+              )
+            ) : null}
+            {days.map(([day, list]) => (
+              <Fragment key={day}>
+                <GroupedHeader>{day}</GroupedHeader>
+                <GroupedList>
+                  {list.map((row) => (
+                    // The list's kept clock format (`useWhen`), not a new one per row.
+                    <AuditRowView key={row.id} row={row} time={when.time(row.at)} />
+                  ))}
+                </GroupedList>
+              </Fragment>
+            ))}
+          </Refreshing>
           {audit.hasNextPage ? (
             <>
               <Gap />
@@ -214,7 +219,7 @@ function byDay(rows: AuditRow[], day: (iso: string) => string): [string, AuditRo
 function AuditRowView({ row, time }: { row: AuditRow; time: string }) {
   const { t, i18n } = useTranslation();
   const { name, text } = auditSentence(t, row, i18n.language);
-  const sub = auditSubLine(t, row);
+  const sub = auditSubLine(t, row, i18n.language);
   const look = auditOutcome(t, row);
   return (
     <GroupedRow
@@ -285,8 +290,9 @@ export function AuditRowScreen({ id }: { id: string }) {
   const name = auditActorName(t, row) ?? t("audit.system");
   const { name: who, text } = auditSentence(t, row, i18n.language);
   const look = auditOutcome(t, row);
-  const reason = auditReason(t, row);
+  const reason = auditReason(t, row, i18n.language);
   const reasonKey = auditReasonKey(row);
+  const reasonLabel = auditReasonLabel(t, row);
   const said = auditToolSaid(row);
   const isCall = row.action === TOOL_CALL;
   const where = auditWhere(t, row);
@@ -294,7 +300,7 @@ export function AuditRowScreen({ id }: { id: string }) {
   const asked = isCall ? askedOf(t, row) : null;
   const input = isCall ? (row.details.input as Record<string, unknown> | undefined) : undefined;
   const sent = input ? Object.entries(input) : [];
-  const changeDetails = isCall ? [] : auditDetailEntries(row.details);
+  const changeDetails = isCall ? [] : auditDetailEntries(row.details, row.action);
   const copy = async () => {
     if (await copyText(row.id)) toast({ title: t("audit.panel.copied"), icon: "check" });
   };
@@ -318,7 +324,7 @@ export function AuditRowScreen({ id }: { id: string }) {
       {reason ? (
         <View style={styles.note}>
           <Note icon={reasonKey === "refused" ? "x" : "info"}>
-            {`${t(`audit.panel.reason.${reasonKey}`)}: ${reason}`}
+            {reasonLabel ? `${reasonLabel}: ${reason}` : reason}
           </Note>
         </View>
       ) : null}

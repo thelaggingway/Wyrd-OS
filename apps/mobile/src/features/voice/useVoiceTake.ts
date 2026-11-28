@@ -16,8 +16,9 @@ import { useTranslation } from "react-i18next";
 import { AccessibilityInfo, Alert, AppState, Linking } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { appAudio, voiceAudio } from "@/lib/audio-mode";
+import { allowFeedbackWhileRecording } from "@/lib/voice-session";
 import { haptics, useToast } from "@/ui";
-import { levelOf, peaksOf, secondsLeft, takeBack } from "./logic";
+import { levelOf, peaksOf, START_SOUND_MS, secondsLeft, takeBack } from "./logic";
 import { joinM4a } from "./m4a";
 import { flushVoice, queueVoice, type VoiceRefusal, type VoiceSend } from "./outbox";
 import { playingId, seekPlayback, startPlayback, stopPlayback } from "./playback";
@@ -35,6 +36,7 @@ const TICK_MS = 50;
 const REVIEW_ID = "voice-take";
 /** How much of the wave's height is drawn while recording. */
 export const LIVE_WAVE = 24;
+const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
 /**
  * `hold`: the finger is down. `locked`: hands free. `paused`: stopped, can listen, go on, send or delete. `sending`: it
@@ -60,6 +62,11 @@ export interface VoiceTarget {
   authorId: string;
   /** Whether this person may record now (`/voice/allowed`); null while unknown. */
   allowed: boolean | null;
+  /**
+   * Asked as the hold starts, before anything records: true when the app showed something instead (the first take
+   * where voice doesn't become text yet, `VoiceSetupSheet`), and the next hold records.
+   */
+  ask?: () => boolean;
   afterSend: () => void;
   /**
    * Right before a take goes: what goes with it, the text typed beside it and the files waiting above the field, once
@@ -389,6 +396,8 @@ export function useVoiceTake(target: VoiceTarget) {
         await voiceAudio(true);
         await recorder.prepareToRecordAsync();
       }
+      // Again after the recorder set the session up itself: the take's haptics reach the hand.
+      allowFeedbackWhileRecording();
       recorder.record();
       progress.value = 1;
       timer.current = setInterval(tick, TICK_MS);
@@ -425,6 +434,7 @@ export function useVoiceTake(target: VoiceTarget) {
   /** The hold reached its time. A first use only asks: the next hold records. */
   const start = useCallback(async () => {
     if (phaseRef.current !== "idle" || starting.current) return;
+    if (targetRef.current.ask?.()) return;
     if (targetRef.current.allowed === false) {
       haptics.warning();
       toast({ title: t("voice.limit"), icon: "x" });
@@ -454,8 +464,11 @@ export function useVoiceTake(target: VoiceTarget) {
       }
       stopPlayback();
       haptics.medium();
+      playSound("record");
       setPhase("hold");
-      await record(warmed ? await warmed : false);
+      // The recorder starts once the sound has rung (ready by then: it got ready while the finger was down).
+      const [ready] = await Promise.all([warmed ?? false, wait(START_SOUND_MS)]);
+      await record(ready);
       // Deleted while the recorder was starting (`cancel` found nothing to stop yet): it stops here, not never.
       if (phaseRef.current === "idle") return void (await cancel(false));
       if (released.current) await send();

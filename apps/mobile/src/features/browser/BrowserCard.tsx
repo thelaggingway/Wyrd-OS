@@ -19,6 +19,7 @@ import {
   useMachines,
 } from "@agenteschat/client";
 import { browserCardLine, hostAndPath, titleKind } from "@agenteschat/client/lib/browser-card";
+import { LEGACY_MOVE, maintenanceNamed, maintenanceOf } from "@agenteschat/client/lib/computer-maintenance";
 import { lowerFirst } from "@agenteschat/client/lib/format";
 import { agentGrammar } from "@agenteschat/client/lib/grammar";
 import { browserNoAnswerMessage, browserOffMessage, profileRefusalLine } from "@agenteschat/client/lib/machines";
@@ -27,11 +28,11 @@ import { isBlankPage, siteName } from "@agenteschat/client/lib/sites";
 import { gradientOf } from "@agenteschat/ui/agent/engine";
 import { LinearGradient } from "expo-linear-gradient";
 import { useIsFocused } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, ScrollView, type StyleProp, StyleSheet, View, type ViewStyle } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { useAppActive } from "@/lib/useAppActive";
+import { INACTIVE_GRACE_MS, useAppActive } from "@/lib/useAppActive";
 import { Sky } from "@/sky/Sky";
 import {
   Button,
@@ -42,19 +43,21 @@ import {
   InkOrbit,
   PixelOrbit,
   PressScale,
+  RADIUS,
   Text,
   TOUCH,
   useReducedMotion,
   useTheme,
   useToast,
 } from "@/ui";
+import { useRowDirectory, useRowMeId } from "../chat/row-data";
 import { openComputer } from "../computer/AgentComputerRow";
 import { ScreenWatch, type ScreenWatchHandle } from "../computer/ScreenWatch";
 import { DEFAULT_DESKTOP } from "../computer/screen-view";
 import { MachineToolButton } from "../devices/ToolOneClick";
 import { ReportProblemButton } from "../report/ReportProblemButton";
 import { withAgentFaces } from "../shared/Face";
-import { useColors, useDirectory, useEdition, useMeId, useNow, useOrgId, useWhen } from "../shared/hooks";
+import { useColors, useEdition, useNow, useOrgId, useWhen } from "../shared/hooks";
 import { agentLook, genderOf } from "../shared/logic";
 import { successHaptic, useSurface } from "../shared/parts";
 import { framesWanted, pageGapKey, pageNoteOf, skyBehind, stepIcon, stepText, waitsForPage } from "./logic";
@@ -99,7 +102,7 @@ const HIST_OUT = FadeOut.duration(120);
  * On the agent's computer full screen (`surface`) the view's own head names it and says what goes on: the card keeps
  * only the request or the site, one action, the page, the person's controls and the last steps.
  */
-export function BrowserCard({
+export const BrowserCard = memo(function BrowserCard({
   agentId,
   run,
   handoff: given = null,
@@ -132,8 +135,8 @@ export function BrowserCard({
 }) {
   const { t, i18n } = useTranslation();
   const orgId = useOrgId();
-  const meId = useMeId();
-  const dir = useDirectory();
+  const meId = useRowMeId();
+  const dir = useRowDirectory();
   const c = useColors();
   const { shadows } = useTheme();
   const reduced = useReducedMotion();
@@ -167,7 +170,7 @@ export function BrowserCard({
   const watching = inView || holding;
   // Its browser on the agent's screen, which this person may watch: the card shows that whole screen instead of the
   // browser's frames (ADR 0058 §7), only while in view with the app in front, and lingering a little after.
-  const active = useAppActive();
+  const active = useAppActive(INACTIVE_GRACE_MS);
   const shown = inView && active;
   const screen = useBrowserScreen(orgId, agentId, {
     enabled: !surface && !profile,
@@ -200,8 +203,13 @@ export function BrowserCard({
   // A profile whose browser is off on its computer: the switch in the page's place (ADR 0036 §8).
   const offHere = Boolean(profile) && live.unavailable === "unavailable" && browserOffMessage(live.message);
   const noAnswer = Boolean(profile) && live.unavailable === "unavailable" && browserNoAnswerMessage(live.message);
-  const machines = useMachines(orgId, offHere);
+  const away = live.unavailable === "offline";
+  const machines = useMachines(orgId, offHere || away);
   const profileMachine = offHere ? machines.data?.find((m) => m.id === profile?.machineId) : undefined;
+  // Its computer away for what we do to it (a move, a restart…): said so, never that it isn't answering.
+  const moving = away
+    ? machines.data?.find((m) => (profile ? m.id === profile.machineId : m.agents.some((a) => a.id === agentId)))
+    : undefined;
   const controller =
     live.handoff?.controllerUserId ??
     live.controllerUserId ??
@@ -336,7 +344,9 @@ export function BrowserCard({
       : note.say === "hidden"
         ? // The card's top (or the full view's head) says who is in control; the page only why it hides.
           t("browser.inCard.hiddenHelp", grammar)
-        : t(pageGapKey(note.say, g, cloud), { name });
+        : note.say === "offline" && moving?.moving
+          ? maintenanceNamed(t, maintenanceOf(moving) ?? LEGACY_MOVE, moving.name)
+          : t(pageGapKey(note.say, g, cloud), { name });
   const coverHelp =
     note.say === "starting"
       ? t("browser.inCard.openingHelp")
@@ -828,16 +838,16 @@ export function BrowserCard({
       ) : null}
     </View>
   );
-}
+});
 
 /**
  * An agent's run in its browser as a row of the conversation: its framed page while it works. When its request for
  * help is the person's and in their control, that request's card (on its message) is the browser and this one steps
  * aside (`BrowserCard`), as on the web.
  */
-export function BrowserRunCard({ run }: { run: LiveRun }) {
+export const BrowserRunCard = memo(function BrowserRunCard({ run }: { run: LiveRun }) {
   return <BrowserCard agentId={run.agentId} run={run} />;
-}
+});
 
 /** The frame: 18 round with its cut corner at 6, the page and what goes under it 5 in, concentric with it. */
 const FRAME = { radius: 18, cut: 6, inset: 5 } as const;
@@ -879,9 +889,10 @@ const styles = StyleSheet.create({
   // the frame's (the inner box clips it).
   framePage: { aspectRatio: 16 / 10, overflow: "hidden" },
   screenRoom: { aspectRatio: DEFAULT_DESKTOP.width / DEFAULT_DESKTOP.height },
-  // Over the page's top right, on glass: the toolbar's buttons, each a finger's 44 by its reach.
-  over: { position: "absolute", top: 8, right: 8, borderRadius: 12 },
-  overIn: { flexDirection: "row", alignItems: "center", gap: 4, padding: 4, borderRadius: 12 },
+  // Over the page's top right, on glass: the toolbar's buttons, each a finger's 44 by its reach. A capsule around the
+  // capsule buttons, 4 out from them, so its ends follow theirs (the computer's dock, `AgentScreen`'s `dockGlass`).
+  over: { position: "absolute", top: 8, right: 8, borderRadius: RADIUS.full },
+  overIn: { flexDirection: "row", alignItems: "center", gap: 4, padding: 4, borderRadius: RADIUS.full },
   histRoom: { position: "absolute", top: 8, right: 8, bottom: 8, left: 8, alignItems: "flex-end" },
   hist: { width: "100%", maxWidth: 300, maxHeight: "100%", borderRadius: 14 },
   histIn: { flexShrink: 1, borderRadius: 14 },

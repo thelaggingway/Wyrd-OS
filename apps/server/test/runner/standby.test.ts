@@ -2,7 +2,17 @@ import { afterEach, expect, test } from "bun:test";
 import { MACHINE_PROTOCOL_VERSION, type ServerFrame } from "@agenteschat/adapters/machine-protocol";
 import { type Dial, RunnerConnection, type Socket, type SocketHandlers } from "../../runner/connection";
 import { bootId } from "../../runner/lock";
-import { ackStandby, askStandby, readStandby, standbyAcked, standbyOn } from "../../runner/standby";
+import {
+  ackStandby,
+  askStandby,
+  readStandby,
+  refusesStandby,
+  STANDBY_POLL_MS,
+  standbyAcked,
+  standbyAnswer,
+  standbyOn,
+  watchStandby,
+} from "../../runner/standby";
 import { removeDirs, tempDir, waitFor } from "./helpers";
 
 /** An operator's standby (ADR 0176): no link to the server, everything else runs, and it ends by itself. */
@@ -51,7 +61,8 @@ function connection() {
     },
     context: { workspaceReal: ws, exec: false, token: "agm_token" },
     dial,
-    random: () => 0,
+    // The longest point of each wait (a random point within the step): the first dial again waits about 1 s.
+    random: () => 0.99,
     onState: (s) => states.push(s),
   });
   return { c, sockets, states };
@@ -107,4 +118,52 @@ test("the ask: in force in this boot until its running minutes pass; resume and 
   expect(standbyAcked(home, ask.id)).toBe(false);
   ackStandby(home, ask.id);
   expect(standbyAcked(home, ask.id)).toBe(true);
+});
+
+test("a written ask is seen at once, well before the next poll; the runner's own answer isn't an ask", async () => {
+  const home = tempDir();
+  dirs.push(home);
+  let seen = 0;
+  const stop = watchStandby(home, () => seen++);
+  try {
+    ackStandby(home, "a1");
+    await Bun.sleep(50);
+    expect(seen).toBe(0);
+    const started = Date.now();
+    askStandby(home, 0);
+    await waitFor(() => seen > 0, STANDBY_POLL_MS / 2);
+    expect(Date.now() - started).toBeLessThan(STANDBY_POLL_MS / 2);
+  } finally {
+    stop();
+  }
+  const after = seen;
+  askStandby(home, 0);
+  await Bun.sleep(50);
+  expect(seen).toBe(after);
+});
+
+test("a folder that can't be watched leaves the poll alone", () => {
+  expect(() => watchStandby("/nonexistent/agentes-runner-home", () => {})()).not.toThrow();
+});
+
+test("before: a standby asked while an agent's turn ran dropped its link (a sleep then froze it); now it is refused and says why", () => {
+  const home = tempDir();
+  dirs.push(home);
+  const ask = askStandby(home, 5, 1000);
+  const boot = bootId();
+  expect(refusesStandby(ask, null, false, 1, 1001, boot)).toBe(true);
+  // Nothing runs, already in standby (a renewal), already answered, lapsed or resumed: as before.
+  expect(refusesStandby(ask, null, false, 0, 1001, boot)).toBe(false);
+  expect(refusesStandby(ask, null, true, 1, 1001, boot)).toBe(false);
+  expect(refusesStandby(ask, ask.id, false, 1, 1001, boot)).toBe(false);
+  expect(refusesStandby(ask, null, false, 1, 1400, boot)).toBe(false);
+  expect(refusesStandby(askStandby(home, 0, 1000), null, false, 1, 1001, boot)).toBe(false);
+  // The answer the `standby` verb reads, and exits 1 on: the guard's pause is called off.
+  ackStandby(home, ask.id, "An agent's turn is running on this computer: no standby now.");
+  expect(standbyAnswer(home, ask.id)).toEqual({
+    refused: "An agent's turn is running on this computer: no standby now.",
+  });
+  expect(standbyAcked(home, ask.id)).toBe(true);
+  ackStandby(home, ask.id);
+  expect(standbyAnswer(home, ask.id)).toEqual({ refused: null });
 });

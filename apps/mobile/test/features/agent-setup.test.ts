@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { type SetupRowFacts, setupRow, setupSteps } from "@agenteschat/client/lib/setup-checklist";
 import { setupStepsInSight } from "../../src/features/agents/setup/steps";
 import { pushedByDefault } from "../main-stack";
+import { chatScreenSource } from "./chat-screen-source";
 import { agent, translator } from "./fixtures";
 
 // A new agent's setup checklist on the phone (ADR 0155 §2): the web's words and rules, its own screens.
@@ -43,7 +44,7 @@ test("who sees it on the phone: who manages it every step, its owner theirs, the
 });
 
 test("the DM draws the checklist on top for whoever sets it up, not the first day nor the no-AI line", () => {
-  const chat = src("chat/ChatScreen.tsx");
+  const chat = chatScreenSource();
   expect(chat).toContain("const setupIntro = useSetupSteps(dmAgent).length > 0 && !rightHand && !isThread;");
   // No no-AI line over it (nor over the plan hold's).
   expect(chat).toContain("member && !rightHand && !planHeld && !setupIntro");
@@ -117,8 +118,10 @@ test("alone in a personal workspace, nothing asks who else talks to an agent (AD
   expect(setupStepsInSight(steps, { mode: "people" }, true)).toEqual([...steps]);
   expect(setupStepsInSight(steps, { mode: "everyone" }, false)).toEqual([...steps]);
   const card = src("agents/setup/SetupCard.tsx");
+  // One who holds the role that answers for it reads its steps as its owner (ADR 0085, addendum of 2026-11-21).
+  expect(card).toContain("const asOwner = owns(agent) ? { ...agent, ownerUserId: meId } : agent;");
   expect(card).toContain(
-    "const steps = setupSteps(agent, { meId, admin: managesAgent(agent), edits: editsAgent(agent) });",
+    "const steps = setupSteps(asOwner, { meId, admin: managesAgent(agent), edits: editsAgent(agent) });",
   );
   expect(card).toContain("return setupStepsInSight(steps, audienceOf(agent), solo);");
   expect(card).toContain("personal: isPersonal(org),");

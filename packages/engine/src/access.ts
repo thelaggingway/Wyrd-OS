@@ -1,6 +1,6 @@
-import { and, asc, type Database, type Executor, eq, inArray, isNull, schema } from "@agenteschat/db";
+import { and, asc, type Database, type Executor, eq, inArray, isNull, or, schema } from "@agenteschat/db";
 import { getAgent } from "./agents";
-import { managesAgent, REACH_COLUMNS } from "./audience";
+import { managesAgent, ownsAgent, REACH_COLUMNS } from "./audience";
 import { recordAudit } from "./audit";
 import { BROWSER_SCOPE, BROWSER_TOOL_INFO, BROWSER_TOOLS, DESKTOP_SCOPE, DESKTOP_TOOL_INFO } from "./browser/types";
 import { caches } from "./cache";
@@ -10,6 +10,7 @@ import { classifiedTools, customScope, isCustom, type ToolAccess } from "./conne
 import { exposedToolName } from "./connectors/mcp";
 import { othersLabel, othersPersonal, seesOthersOnAgent } from "./connectors/personal";
 import { sha256 } from "./crypto";
+import { APPS_TOOLS } from "./desktop/person-apps";
 import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { requirePermission } from "./organizations";
 import { isRightHand, isRightHandId, RIGHT_HAND_COMPUTER_GRANTS, RIGHT_HAND_GRANTS } from "./right-hand";
@@ -52,6 +53,7 @@ export const BUILTIN_TOOLS: Record<string, string[]> = {
     "web_search",
     "web_fetch",
     "image_search",
+    "show_image",
   ],
   "context:read": ["search_context", "get_summary", "expand"],
   "memory:write": ["remember", "update_memory", "forget", "save_how_to", "propose_instruction_change"],
@@ -112,6 +114,7 @@ export const BUILTIN_TOOLS: Record<string, string[]> = {
     "offer_approvals",
     "propose_member_changes",
     "offer_open_page",
+    "offer_voice_setup",
     "set_team_week",
     "offer_answers",
     "propose_team",
@@ -138,6 +141,9 @@ export const BUILTIN_TOOLS: Record<string, string[]> = {
 const UNLISTED_TOOLS: Record<string, string[]> = {
   "context:read": ["read_conversation"],
   "schedule:write": ["delete_routine", "run_routine_now"],
+  "sandbox:run": ["review_media"],
+  // The person's own apps (ADR 0258): on with the desktop, for a computer whose runner serves them.
+  [DESKTOP_SCOPE]: [...APPS_TOOLS],
 };
 
 /**
@@ -252,7 +258,7 @@ export const BUILTIN_TOOL_INFO: Record<string, { label: string; description: str
   },
   offer_install_skill: {
     label: "Offer to install a skill",
-    description: "Posts a card whose button opens the install dialog with the skill's link filled in.",
+    description: "Posts a card whose button opens the install dialog with the skill read from its link or its .zip.",
   },
   update_skill_from_source: {
     label: "Update skills from their links",
@@ -311,7 +317,8 @@ export const BUILTIN_TOOL_INFO: Record<string, { label: string; description: str
   },
   offer_connect_app: {
     label: "Offer to connect an app or MCP",
-    description: "Posts a card whose button opens the dialog to connect an app or an MCP server by its address.",
+    description:
+      "Posts a card whose button opens the dialog to connect an app or an MCP server: from the catalog by name, any other by its address.",
   },
   offer_invites: {
     label: "Offer to invite people",
@@ -345,6 +352,10 @@ export const BUILTIN_TOOL_INFO: Record<string, { label: string; description: str
   offer_open_page: {
     label: "Offer to open a screen",
     description: "Posts a card whose button opens a screen of the app, such as billing, roles or an agent's page.",
+  },
+  offer_voice_setup: {
+    label: "Offer to turn on voice messages",
+    description: "Posts a card that turns on voice messages in one click for whoever runs the server, or asks them.",
   },
   set_team_week: {
     label: "Change the Team week card",
@@ -440,7 +451,7 @@ export async function orgToolCatalog(db: Database, orgId: string, options: { vie
       continue;
     }
     if (isCustom(c)) {
-      const tools = await classifiedTools(db, c.id);
+      const tools = await classifiedTools(db, c);
       const byScope = new Map<string, CatalogTool[]>();
       for (const t of tools) {
         const scope = customScope(c.id, t.access as ToolAccess);
@@ -637,7 +648,7 @@ export async function setAgentAccess(
   const agent = await getAgent(db, orgId, agentId);
   if (!agent) throw new NotFoundError("Agent not found");
   const admin = managesAgent(agent, actorId, membership);
-  if (!admin && agent.ownerUserId !== actorId) {
+  if (!admin && !ownsAgent(agent, actorId, membership.roleIds)) {
     throw new ForbiddenError("Only an admin or the agent's owner can change its access");
   }
   const live = await db
@@ -870,20 +881,24 @@ export function appHeldBy(grants: ScopeGrant[], id: string): string | null {
  * of the organization's connections by `connector:<id>`, its name or its catalog id (mailboxes and databases have
  * their own screens). `choices` lists them all.
  */
-export async function resolveApps(db: Executor, orgId: string, names: string[]) {
+export async function resolveApps(db: Executor, orgId: string, names: string[], personId?: string | null) {
   // The team's alone: a person's own connection is given to agents by that person only, never through a card.
+  // `personId`'s own are read only to say which unknown names are theirs (`personal`); nobody else's is ever named.
   const active = await db
     .select({
       id: connectorConnections.id,
       label: connectorConnections.label,
       connector: connectorConnections.connector,
+      ownerUserId: connectorConnections.ownerUserId,
     })
     .from(connectorConnections)
     .where(
       and(
         eq(connectorConnections.orgId, orgId),
         isNull(connectorConnections.revokedAt),
-        isNull(connectorConnections.ownerUserId),
+        personId
+          ? or(isNull(connectorConnections.ownerUserId), eq(connectorConnections.ownerUserId, personId))
+          : isNull(connectorConnections.ownerUserId),
       ),
     )
     .orderBy(asc(connectorConnections.createdAt));
@@ -892,9 +907,12 @@ export async function resolveApps(db: Executor, orgId: string, names: string[]) 
     orgId,
     active.map((c) => c.id),
   );
-  const connections = active.filter((c) => !own.has(c.id));
+  const apps = active.filter((c) => !own.has(c.id));
+  const connections = apps.filter((c) => !c.ownerUserId);
+  const theirs = apps.filter((c) => c.ownerUserId);
   const found = new Map<string, { id: string; label: string }>();
   const unknown: string[] = [];
+  const personal: string[] = [];
   for (const name of new Set(names)) {
     const key = name.trim();
     const builtin = isBuiltinScope(key) ? BUILTIN_SCOPES[key] : undefined;
@@ -904,18 +922,21 @@ export async function resolveApps(db: Executor, orgId: string, names: string[]) 
     }
     const lower = key.toLowerCase();
     const byId = lineConnection(lower);
-    const matches = connections.filter((c) =>
-      byId ? c.id === byId : c.label.toLowerCase() === lower || c.connector === lower,
-    );
+    const named = (c: { id: string; label: string; connector: string }) =>
+      byId ? c.id === byId : c.label.toLowerCase() === lower || c.connector === lower;
+    const matches = connections.filter(named);
     const [only] = matches;
     if (only && matches.length === 1) found.set(name, { id: `${CONNECTOR_LINE}${only.id}`, label: only.label });
-    else unknown.push(name);
+    else {
+      unknown.push(name);
+      if (matches.length === 0 && theirs.some(named)) personal.push(name);
+    }
   }
   const choices = [
     ...connections.map((c) => `${CONNECTOR_LINE}${c.id} (${c.label})`),
     ...Object.entries(BUILTIN_SCOPES).map(([scope, info]) => `${scope} (${info.label})`),
   ];
-  return { found, unknown, choices };
+  return { found, unknown, personal, choices };
 }
 
 /**

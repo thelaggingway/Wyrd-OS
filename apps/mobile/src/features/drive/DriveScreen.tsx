@@ -1,4 +1,4 @@
-import { isLiveFileKind, LIVE_PRESENCE_BATCH, useArtifacts, useLivePresence } from "@agenteschat/client";
+import { type Artifact, isLiveFileKind, LIVE_PRESENCE_BATCH, useArtifacts, useLivePresence } from "@agenteschat/client";
 import { folderChildren, folderTrail } from "@agenteschat/client/lib/drive";
 import { can } from "@agenteschat/client/lib/permissions";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
@@ -11,18 +11,21 @@ import {
   EmptyState,
   Filters,
   type HeaderMenuItem,
+  Refreshing,
   SCREEN_X,
   SearchField,
   SectionHeader,
   SkeletonList,
   useReducedMotion,
 } from "@/ui";
+import { noteCardsScrolled } from "../files/pdf-preview";
 import { LIVE_ICON, LIVE_KINDS_MADE, LIVE_SF } from "../live-files/routes";
 import { useCreateLive } from "../live-files/shared/useCreateLive";
 import { chooseAction } from "../settings/parts";
 import { FirstUse, LoadFailed } from "../shared/FirstUse";
 import { useOrgId, usePullRefresh, useWhen } from "../shared/hooks";
 import { PushedLargeTitle } from "../shared/PushedLargeTitle";
+import { useLatest } from "../shared/parts";
 import { SheetHostProvider } from "../shared/SheetHost";
 import { DriveCard, driveRef, UploadingCard } from "./DriveCard";
 import { FolderPath, FolderRows, useFolderActions } from "./folders";
@@ -41,6 +44,18 @@ import { useDriveUpload } from "./useDriveUpload";
 
 /** Cards shown at first and added by "Mostrar mais" (each card loads its own preview). */
 const PAGE = 24;
+
+/** A month's heading format per language and whether it says the year, made once: a format is costly to build. */
+const monthFormats = new Map<string, Intl.DateTimeFormat>();
+const monthFormat = (locale: string, withYear: boolean) => {
+  const key = `${locale}\n${withYear}`;
+  let format = monthFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, { month: "long", ...(withYear ? { year: "numeric" as const } : {}) });
+    monthFormats.set(key, format);
+  }
+  return format;
+};
 
 /**
  * Drive, pushed from Você: the search, the type chips (Tudo, Documentos, Planilhas, Apresentações, Quadros, Imagens,
@@ -118,14 +133,14 @@ function DriveBody({ highlightId = null, folderId = null }: { highlightId?: stri
   const presence = useLivePresence(orgId, liveIds);
   const label = (s: DriveDaySection) =>
     s.label.kind === "month"
-      ? new Intl.DateTimeFormat(when.locale, {
-          month: "long",
-          ...(s.label.year !== new Date().getFullYear() ? { year: "numeric" as const } : {}),
-        })
+      ? monthFormat(when.locale, s.label.year !== new Date().getFullYear())
           .format(new Date(s.label.year, s.label.month, 1))
           .replace(/^./, (x) => x.toLocaleUpperCase())
       : t(`mobile.drive.section.${s.label.kind}`);
   const mayUpload = can(useOrg().org, "upload_files");
+  // One long press for every card, reading the menu as of this render: a new one each render would draw every card
+  // again (they are memoized) at each letter typed in the search.
+  const fileMenu = useLatest((x: Artifact, open: () => void) => arrange.fileMenu(x, open, mayUpload));
   const uploader = useDriveUpload(list.refetch, folderId);
   const maker = useCreateLive();
   const newItems: HeaderMenuItem[] = [
@@ -176,6 +191,8 @@ function DriveBody({ highlightId = null, folderId = null }: { highlightId?: stri
           }
         : {})}
       refreshControl={<RefreshControl refreshing={pull.refreshing} onRefresh={pull.onRefresh} />}
+      // The grid draws every card at once: a PDF's card downloads its first page only once it comes in sight.
+      onScrollEnd={noteCardsScrolled}
     >
       {here ? <FolderPath trail={trail} /> : null}
       <View style={styles.search}>
@@ -228,55 +245,57 @@ function DriveBody({ highlightId = null, folderId = null }: { highlightId?: stri
           onPress={uploader.pick}
         />
       ) : (
-        <Animated.View {...fade}>
-          <LayoutAnimationConfig skipEntering>
-            {/* A file on its way in holds a card's place above the days, so a large one shows it's going. */}
-            {uploader.uploading !== null ? (
-              <Animated.View {...fade} style={[styles.row, styles.uploading]}>
-                <UploadingCard name={uploader.uploading} />
-                <View style={styles.spacer} />
-              </Animated.View>
-            ) : null}
-            {sections.map((s) => (
-              <Animated.View key={s.key} {...fade}>
-                <SectionHeader title={label(s)} count={s.items.length} />
-                <View style={styles.grid}>
-                  {gridRows(s.items).map((row) => (
-                    <View key={row.map((a) => a.id).join(":")} style={styles.row}>
-                      {row.map((a) => (
-                        <DriveCard
-                          key={a.id}
-                          artifact={a}
-                          highlighted={a.id === highlightId}
-                          siblings={shownRefs}
-                          onLongPress={(x, open) => arrange.fileMenu(x, open, mayUpload)}
-                          present={presence.data?.[a.id]}
-                        />
-                      ))}
-                      {row.length === 1 ? <View style={styles.spacer} /> : null}
-                    </View>
-                  ))}
+        <Refreshing busy={list.isPlaceholderData} label={t("common.loading")}>
+          <Animated.View {...fade}>
+            <LayoutAnimationConfig skipEntering>
+              {/* A file on its way in holds a card's place above the days, so a large one shows it's going. */}
+              {uploader.uploading !== null ? (
+                <Animated.View {...fade} style={[styles.row, styles.uploading]}>
+                  <UploadingCard name={uploader.uploading} />
+                  <View style={styles.spacer} />
+                </Animated.View>
+              ) : null}
+              {sections.map((s) => (
+                <Animated.View key={s.key} {...fade}>
+                  <SectionHeader title={label(s)} count={s.items.length} />
+                  <View style={styles.grid}>
+                    {gridRows(s.items).map((row) => (
+                      <View key={row.map((a) => a.id).join(":")} style={styles.row}>
+                        {row.map((a) => (
+                          <DriveCard
+                            key={a.id}
+                            artifact={a}
+                            highlighted={a.id === highlightId}
+                            siblings={shownRefs}
+                            onLongPress={fileMenu}
+                            present={presence.data?.[a.id]}
+                          />
+                        ))}
+                        {row.length === 1 ? <View style={styles.spacer} /> : null}
+                      </View>
+                    ))}
+                  </View>
+                </Animated.View>
+              ))}
+              {visible < matches.length || hasNextPage ? (
+                // Centred across the screen inside its margins (a button keeps to its own width at the row's start).
+                <View style={styles.more}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    label={t("mobile.drive.more")}
+                    loading={list.isFetchingNextPage}
+                    onPress={() => {
+                      setShown((n) => n + PAGE);
+                      // A page that failed is asked for again only when the person asks for more.
+                      if (list.isFetchNextPageError) void fetchNextPage();
+                    }}
+                  />
                 </View>
-              </Animated.View>
-            ))}
-            {visible < matches.length || hasNextPage ? (
-              // Centred across the screen inside its margins (a button keeps to its own width at the row's start).
-              <View style={styles.more}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  label={t("mobile.drive.more")}
-                  loading={list.isFetchingNextPage}
-                  onPress={() => {
-                    setShown((n) => n + PAGE);
-                    // A page that failed is asked for again only when the person asks for more.
-                    if (list.isFetchNextPageError) void fetchNextPage();
-                  }}
-                />
-              </View>
-            ) : null}
-          </LayoutAnimationConfig>
-        </Animated.View>
+              ) : null}
+            </LayoutAnimationConfig>
+          </Animated.View>
+        </Refreshing>
       )}
     </PushedLargeTitle>
   );

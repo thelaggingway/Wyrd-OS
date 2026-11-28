@@ -1,12 +1,25 @@
 import { expect, test } from "bun:test";
 import {
+  brainTopic,
   CODEX_FOLDER_PROTOCOL,
   CODEX_WINDOWS_PROTOCOL,
   CONTEXT_LIMIT_PROTOCOL,
+  createMemoryPubSub,
+  GROK_WINDOWS_PROTOCOL,
+  HELD_TURN_PROTOCOL,
   MACHINE_PROTOCOL_VERSION,
+  type MachineRequest,
   OPENCODE_ACP_PROTOCOL,
+  type WireBrainEvent,
 } from "@agenteschat/adapters";
-import { type BrainTurnRequest, CodexBrain, type ComputerBrainLink, OpencodeBrain } from "../src/brains/codex";
+import {
+  type BrainTurnRequest,
+  CodexBrain,
+  type ComputerBrainLink,
+  GrokBrain,
+  hubBrainLink,
+  OpencodeBrain,
+} from "../src/brains/codex";
 import { computerPrompt } from "../src/brains/prompt";
 import type { BrainEvent, BrainTurn } from "../src/brains/types";
 import { MachineRequestError } from "../src/machine-hub";
@@ -51,7 +64,7 @@ function link(opts: {
         execAllowed: true,
         ...(opts.protocol !== undefined ? { protocol: opts.protocol } : {}),
         ...(opts.os ? { os: opts.os } : {}),
-        executors: opts.version === null ? {} : { codex: { version: opts.version ?? "codex-cli 0.163.0" } },
+        executors: opts.version === null ? {} : { codex: { version: opts.version ?? "codex-cli 0.170.0" } },
       };
     },
     async turn(_machineId, request, { onEvent }) {
@@ -119,6 +132,33 @@ test("on Windows a runner before OPENCODE_ACP_PROTOCOL refuses every OpenCode tu
   expect(current.sent).toHaveLength(1);
   expect(current.sent[0]).toMatchObject({ kind: "opencode" });
   const mac = opencodeLink("darwin", OPENCODE_ACP_PROTOCOL - 1);
+  await collect(brain(mac).run(turn(), io()));
+  expect(mac.sent).toHaveLength(1);
+});
+
+test("Grok runs on Windows from GROK_WINDOWS_PROTOCOL; an older Windows runner is too old there, nothing sent", async () => {
+  const grokLink = (os: string, protocol: number) => {
+    const l = link({ os, protocol, events: [{ type: "done", text: "ok" }] });
+    l.status = async () => ({
+      online: true,
+      execAllowed: true,
+      protocol,
+      os,
+      executors: { grok: { version: "1.0.45" } },
+    });
+    return l;
+  };
+  const brain = (l: ComputerBrainLink) => new GrokBrain({ link: l, mcp: async () => ({ token: "t" }) });
+  const old = grokLink("windows", GROK_WINDOWS_PROTOCOL - 1);
+  expect(await collect(brain(old).run(turn(), io()))).toMatchObject([
+    { type: "error", code: "runner_outdated", message: expect.stringContaining("Grok Build on Windows") },
+  ]);
+  expect(old.sent).toEqual([]);
+  const current = grokLink("windows", GROK_WINDOWS_PROTOCOL);
+  await collect(brain(current).run(turn(), io()));
+  expect(current.sent).toHaveLength(1);
+  expect(current.sent[0]).toMatchObject({ kind: "grok" });
+  const mac = grokLink("darwin", GROK_WINDOWS_PROTOCOL - 1);
   await collect(brain(mac).run(turn(), io()));
   expect(mac.sent).toHaveLength(1);
 });
@@ -208,13 +248,39 @@ test("a resumed turn sends only what came after the brain's last reply", () => {
   );
 });
 
-test("refuses before sending: offline, no Codex, no session; any Codex version goes", async () => {
+test("a model the ChatGPT sign-in refused stays out of that sign-in's later turns; other brains and sign-ins keep it", async () => {
+  const refusal = "The 'gpt-6.2-sol' model is not supported when using Codex with a ChatGPT account.";
+  const l = link({});
+  l.turn = async (_machineId, request, { onEvent }) => {
+    l.sent.push(request);
+    onEvent(
+      request.model
+        ? { type: "error", code: "codex_failed", message: refusal }
+        : { type: "done", text: "Feito.", session: { id: SESSION } },
+    );
+  };
+  const brain = new CodexBrain({ link: l, mcp: async () => ({ token: "t" }) });
+  const on = (machineId: string) =>
+    turn({ model: "gpt-6.2-sol", session: { id: SESSION, resume: false, machineId, cwd: "app" } });
+  // The refusal is the turn's error: the executor takes it again in a fresh session.
+  expect(await collect(brain.run(on("m-refused"), io()))).toMatchObject([{ type: "error", message: refusal }]);
+  expect(await collect(brain.run(on("m-refused"), io()))).toMatchObject([{ type: "done", text: "Feito." }]);
+  expect(await collect(brain.run(on("m-other"), io()))).toMatchObject([{ type: "error" }]);
+  expect(l.sent.map((r) => r.model)).toEqual(["gpt-6.2-sol", undefined, "gpt-6.2-sol"]);
+});
+
+test("refuses before sending: offline, no Codex, no session, a Codex below its floor; any other version goes", async () => {
   const run = async (l: ComputerBrainLink, t = turn()) =>
     collect(new CodexBrain({ link: l, mcp: async () => ({ token: "t" }) }).run(t, io()));
   const offline = link({ online: false });
   expect(await run(offline)).toMatchObject([{ type: "error", code: "machine_offline", retryable: true }]);
   expect(await run(link({ version: null }))).toMatchObject([{ type: "error", code: "codex_missing" }]);
-  for (const version of ["codex-cli 0.100.0", "codex-cli 0.170.0", "WARNING: proceeding\ncodex-cli 0.170.0", ""]) {
+  // Older than `CLI_FLOORS.codex`: the turn waits for an update there, never sent to fail.
+  const old = link({ version: "codex-cli 0.100.0" });
+  expect(await run(old)).toMatchObject([{ type: "error", code: "cli_outdated", retryable: true }]);
+  expect(old.sent).toHaveLength(0);
+  // A line with no version in it is never held back on a guess.
+  for (const version of ["codex-cli 0.170.0", "WARNING: proceeding\ncodex-cli 0.170.0", ""]) {
     const any = link({ version });
     await run(any);
     expect(any.sent).toHaveLength(1);
@@ -392,4 +458,44 @@ test("a runner before CODEX_FOLDER_PROTOCOL: the turn stays in the agent's folde
     sent: { cwd: "repos/acme/app", system: `You are Dev.\n\n${code.prompt}` },
     prepared: 1,
   });
+});
+
+test("Codex, Antigravity and the rest: a turn the link cut mid-way is taken over on the computer, not failed", async () => {
+  const pubsub = createMemoryPubSub();
+  const runId = turn().runId;
+  const calls: MachineRequest[] = [];
+  let online = true;
+  const hub = {
+    status: async () => ({ online, protocol: HELD_TURN_PROTOCOL, lastSeenAt: new Date().toISOString() }) as never,
+    call: async (_machineId: string, request: MachineRequest) => {
+      calls.push(request);
+      const say = (event: WireBrainEvent) =>
+        pubsub.publish(brainTopic(runId), { type: "brain.event", machineId: "m1", event });
+      if (calls.length === 1) {
+        await say({ type: "text_delta", text: "On it" });
+        online = false;
+        setTimeout(() => (online = true), 200);
+        throw new MachineDroppedError("mac");
+      }
+      await say({ type: "done", text: "On it: done." });
+      await pubsub.publish(brainTopic(runId), { type: "brain.done", machineId: "m1" });
+      return { runId, final: { type: "done", text: "On it: done." } } as never;
+    },
+  };
+  const events: unknown[] = [];
+  await hubBrainLink({ hub, pubsub, finalGraceMs: 20, heldTurnWaitMs: 2_000 }).turn(
+    "m1",
+    {
+      runId,
+      kind: "codex",
+      session: { id: SESSION, resume: true },
+      cwd: "",
+      system: "",
+      prompt: "hi",
+      mcp: { token: "t" },
+    },
+    { signal: new AbortController().signal, onEvent: (e) => events.push(e) },
+  );
+  expect(events.at(-1)).toEqual(expect.objectContaining({ type: "done", text: "On it: done." }));
+  expect(calls.map((r) => (r as { reattach?: boolean }).reattach === true)).toEqual([false, true]);
 });

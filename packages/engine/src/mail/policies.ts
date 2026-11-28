@@ -1,6 +1,6 @@
 import { and, type Database, eq, inArray, like, schema } from "@agenteschat/db";
 import { type Agent, getAgent } from "../agents";
-import { audienceError, canTalkTo, managesAgent, speakerFor } from "../audience";
+import { audienceError, canTalkTo, managesAgent, ownsAgent, speakerFor } from "../audience";
 import { recordAudit } from "../audit";
 import { caches } from "../cache";
 import { seesOthersOnAgent } from "../connectors/personal";
@@ -189,13 +189,16 @@ async function mayChangeMail(
     // Its rules can loosen at any level, for an agent that answers them; otherwise they may only lower it.
     if (canTalkTo(agent, actorId, await speakerFor(db, orgId, actorId))) return true;
     if (lowering) return false;
-    throw await audienceError(db, agent);
+    throw await audienceError(db, agent, actorId);
   }
   if (!lowering) throw await mailOwnerOnlyError(db, account);
-  // Who manages the agent (`managesAgent`, ADR 0085 addendum of 2026-11-17), never every holder of the key.
+  // Its owner (or who holds its owner role, ADR 0085, addendum of 2026-11-21), or who manages the agent
+  // (`managesAgent`, ADR 0085 addendum of 2026-11-17), never every holder of the key.
   if (agent.ownerUserId !== actorId) {
-    const membership = await requirePermission(db, actorId, orgId, "manage_agents");
-    if (!managesAgent(agent, actorId, membership)) throw new ForbiddenError();
+    const membership = await requirePermission(db, actorId, orgId, "read");
+    if (!ownsAgent(agent, actorId, membership.roleIds) && !managesAgent(agent, actorId, membership)) {
+      throw new ForbiddenError();
+    }
   }
   return false;
 }

@@ -15,7 +15,12 @@ const RUNNER = {
   workspace: "/Users/w/agentes",
   exec: true,
 };
-const CLAUDE = { claude: { version: "2.1.300", loggedIn: true }, detectedAt: new Date().toISOString() };
+// Claude Code installed; the runner fetches the Antigravity CLI itself when Gemini needs it (ADR 0228 §6).
+const CLAUDE = {
+  claude: { version: "2.1.300", loggedIn: true },
+  detectedAt: new Date().toISOString(),
+  copies: { fetchable: ["antigravity" as const] },
+};
 
 async function start() {
   t = await createTestServer({ env: { ALLOW_SIGNUP: "true" }, reply: () => ({ chunks: ["ok"] }) });
@@ -74,10 +79,13 @@ test("outages and move-agents over HTTP: the contract the apps read", async () =
       platform: "mac",
       managed: false,
       offlineSince: expect.any(String),
+      moving: false,
+      maintenance: null,
       agents: [{ agentId, name: "Dev", brain: "claude_code", waiting: { routines: 0, conversations: 1 } }],
       waitingRuns: 1,
     },
   ]);
+  // Both Macs' runners fetch the Antigravity CLI themselves: Gemini thinks there once an account signs in.
   expect(body.targets).toEqual([
     {
       kind: "machine",
@@ -86,7 +94,7 @@ test("outages and move-agents over HTTP: the contract the apps read", async () =
       platform: "mac",
       managed: false,
       online: true,
-      brains: ["claude_code"],
+      brains: ["claude_code", "antigravity"],
       reasonOff: null,
     },
     {
@@ -96,7 +104,7 @@ test("outages and move-agents over HTTP: the contract the apps read", async () =
       platform: "mac",
       managed: false,
       online: false,
-      brains: ["claude_code"],
+      brains: ["claude_code", "antigravity"],
       reasonOff: "offline",
     },
   ]);
@@ -116,7 +124,7 @@ test("outages and move-agents over HTTP: the contract the apps read", async () =
     json: { agentIds: [agentId], target: { kind: "machine", machineId: pro } },
   });
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ moved: [agentId], skipped: [], resumed: 1, stillWaiting: 0 });
+  expect(await res.json()).toEqual({ moved: [agentId], skipped: [], resumed: 1, stillWaiting: 0, planDropped: [] });
   const [moved] = await t.db
     .select()
     .from(schema.agentRuns)
@@ -159,6 +167,8 @@ test("a computer's queue over HTTP: every member reads it, only the org's own co
   expect(await res.json()).toEqual({
     machineId: pro,
     name: "MacBook Pro",
+    moving: false,
+    maintenance: null,
     working: [],
     waiting: [
       {

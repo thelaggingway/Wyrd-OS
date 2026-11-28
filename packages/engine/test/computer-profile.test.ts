@@ -73,7 +73,7 @@ function link(protocol: number): ComputerBrainLink & { sent: BrainTurnRequest[] 
   return {
     sent,
     async status() {
-      return { online: true, execAllowed: true, protocol, executors: { codex: { version: "codex-cli 0.163.0" } } };
+      return { online: true, execAllowed: true, protocol, executors: { codex: { version: "codex-cli 0.170.0" } } };
     },
     async turn(_machineId, request, { onEvent }) {
       sent.push(request);
@@ -112,6 +112,19 @@ describe("the server's rules for a run's prompts (Claude Code and Codex alike)",
     expect(ask("Bash", { command: "gh -R acme/app pr merge 3" }).behavior).toBe("deny");
     expect(ask("Bash", { command: "npm install" }).behavior).toBe("allow");
     expect(ask("Write", { file_path: "/w/dev/repos/acme/app/src/a.ts" }).behavior).toBe("allow");
+  });
+
+  test("a privileged container runs on the agent's own rootless engine, only there (ADR 0209)", () => {
+    const run = (s: Record<string, unknown>) =>
+      JSON.parse(
+        runPermissionPrompt(
+          { tool_name: "Bash", input: { command: "docker run --privileged docker:dind" }, scope: s },
+          { canRun: true },
+        ),
+      ).behavior;
+    expect(run({ ...scope, rootlessContainers: true })).toBe("allow");
+    expect(run(scope)).toBe("deny");
+    expect(run({ ...scope, rootlessContainers: "yes" })).toBe("deny");
   });
 
   test("the runner's home, wherever the runner says it is, holds secrets (its AI accounts)", () => {
