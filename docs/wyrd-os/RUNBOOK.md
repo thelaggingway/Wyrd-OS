@@ -46,6 +46,27 @@ a cloud VM, a sandbox provider or a client's PC. Podman should run the same imag
 
 Secret values go only in the server's `.env`. Never commit them.
 
+### Model keys through InstaBox Org Secrets
+
+On InstaBox a model key can stay out of the machine entirely. An Org Secret (scoped to its API's host) is attached
+to the machine, which then sees only a placeholder (`ibsec_…`) in login shells; InstaBox's outbound proxy swaps
+in the real key on HTTPS requests to that host, in any header.
+
+- **Attach it.** A machine made before the secret keeps its old selection. `PATCH /v1/machines/{id}/secrets`
+  (or `instabox secrets select`) replaces the whole list, so read it first with `GET` and send every name back.
+- **The container must trust the proxy.** The app's `docker-compose.override.yml` mounts the proxy's CA and sets
+  `NODE_EXTRA_CA_CERTS` (wyrd-os-1 has this). Without it, calls fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+- **Store the placeholder as the key.** In the workspace, add the provider with the placeholder as its API key
+  (Settings › AI, or `POST /api/app/organizations/{org}/credentials`); the real key never reaches the app or its
+  database.
+
+wyrd-os-1 has `ZAI_API_KEY`, `DEEPSEEK_API_KEY` and `LAGGINGWAY_API_KEY` attached. The last is WyrdWerk's Bifrost
+gateway, saved in the demo workspace as the custom provider "Laggingway" (`https://api.laggingway.com/v1`,
+OpenAI style, not the default): 74 chat models named `Provider/model` (such as `Openkodo/glm-5.3`), with the
+gateway's prices. The app takes at most US$ 10 per million tokens, so the four dearer models (Kimi K3 and
+Gemini 4 Neon) are saved unpriced. The app's tool-call check passed on 71; three opencode-go contributor or free
+models failed it.
+
 ### Two ways to update a server
 
 1. **Image swap** (how wyrd-os-1 runs now). On the server:
